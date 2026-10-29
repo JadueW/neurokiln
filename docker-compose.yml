@@ -1,0 +1,22 @@
+name: neurokiln
+
+services:
+  neurokiln:
+    build:
+      context: .
+    image: neurokiln:0.4.0
+    container_name: neurokiln
+    ports:
+      # Local only by default. Read SECURITY.md before exposing the API.
+      - "127.0.0.1:8100:8100"
+    environment:
+      NEUROKILN_DATA_DIR: /data
+      NEUROKILN_MNE_DATA: /data/mne
+      NEUROKILN_WEB_DIST: /app/web/dist
+      NEUROKILN_JOB_WORKERS: "1"
+    volumes:
+      - neurokiln-data:/data
+    restart: unless-stopped
+
+volumes:
+  neurokiln-data:

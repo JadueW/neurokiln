@@ -1,0 +1,16 @@
+{
+  "experiment_id": 1,
+  "name": "黄金演示 · 只读报告",
+  "protocol": "within_subject",
+  "n_splits": 4,
+  "rows": [
+    {
+      "pipeline": "csp_lda",
+      "balanced_accuracy": 0.675
+    },
+    {
+      "pipeline": "riemann_mdm",
+      "balanced_accuracy": 0.7749999999999999
+    }
+  ]
+}

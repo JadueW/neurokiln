@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use NeuroKiln in research, please cite this software."
+title: "NeuroKiln: reproducible, leakage-safe BCI algorithm evaluation and tuning"
+abstract: >-
+  NeuroKiln is an open-source platform for reproducible BCI algorithm evaluation.
+  It combines dataset adapters, leakage-safe protocol splitting, a DAG pipeline
+  engine, Grey Wolf hyperparameter optimization with Pareto auditing, statistical
+  reporting and reproduction bundles.
+type: software
+authors:
+  - name: "NeuroKiln Contributors"
+version: 0.4.0
+date-released: 2026-10-30
+license: Apache-2.0
+keywords:
+  - brain-computer interface
+  - EEG
+  - reproducibility
+  - hyperparameter optimization
+  - machine learning
+  - neuroscience

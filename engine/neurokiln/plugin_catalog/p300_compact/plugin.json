@@ -1,0 +1,41 @@
+{
+  "id": "p300_compact",
+  "name": "紧凑 xDAWN + LDA",
+  "version": "1.0.0",
+  "schema_version": 2,
+  "engine_min_version": "0.1.0",
+  "api_version": 1,
+  "description": "1–16 Hz 带通与 4 个空间滤波器的 xDAWN，适合通道数较少的 P300 采集。声明式 DAG，可在受限模式直接启用。",
+  "author": "NeuroKiln",
+  "license": "Apache-2.0",
+  "runtime": "graph",
+  "permissions": ["graph"],
+  "tags": ["P300", "ERP", "xDAWN"],
+  "pipelines": [
+    {
+      "id": "compact_xdawn",
+      "name": "紧凑 xDAWN + LDA",
+      "paradigm": "P300",
+      "description": "1–16 Hz 带通 → xDAWN 4 滤波器 → 收缩 LDA；xDAWN 仅在训练折拟合。",
+      "graph": {
+        "nodes": [
+          {
+            "id": "bp",
+            "type": "preprocess.bandpass",
+            "params": {"low": 1.0, "high": 16.0, "order": 4},
+            "label": "1–16 Hz 带通"
+          },
+          {
+            "id": "clf",
+            "type": "decoder.xdawn_lda",
+            "params": {"n_filters": 4, "shrinkage": "auto"},
+            "label": "xDAWN + 收缩 LDA"
+          }
+        ],
+        "edges": [
+          {"source": "bp", "target": "clf"}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "id": "ssvep_fbcca_wide",
+  "name": "宽频 FBCCA（4 子带）",
+  "version": "1.0.0",
+  "schema_version": 2,
+  "engine_min_version": "0.1.0",
+  "api_version": 1,
+  "description": "6–50 Hz 预滤波与 4 子带 FBCCA，适用于 40 Hz 以内的 SSVEP 刺激频率。频率表来自数据集元数据。声明式 DAG，可在受限模式直接启用。",
+  "author": "NeuroKiln",
+  "license": "Apache-2.0",
+  "runtime": "graph",
+  "permissions": ["graph"],
+  "tags": ["SSVEP", "CCA", "频率识别"],
+  "pipelines": [
+    {
+      "id": "wide_fbcca",
+      "name": "宽频 FBCCA（4 子带）",
+      "paradigm": "SSVEP",
+      "description": "6–50 Hz 带通 → 4 子带 FBCCA，5 次谐波。",
+      "graph": {
+        "nodes": [
+          {
+            "id": "bp",
+            "type": "preprocess.bandpass",
+            "params": {"low": 6.0, "high": 50.0, "order": 4},
+            "label": "6–50 Hz 带通"
+          },
+          {
+            "id": "clf",
+            "type": "decoder.ssvep_fbcca",
+            "params": {"n_harmonics": 5, "n_bands": 4},
+            "label": "4 子带 FBCCA"
+          }
+        ],
+        "edges": [
+          {"source": "bp", "target": "clf"}
+        ]
+      }
+    }
+  ]
+}

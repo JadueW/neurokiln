@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible defect in the engine, API or web UI.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not include tokens, `.auth_secret`, private datasets or subject-identifying data.
+        Security issues should follow SECURITY.md instead of a public issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, including dataset, protocol, pipeline and seeds.
+      placeholder: |
+        1. Start with docker compose up
+        2. Run dataset=synthetic, protocol=within_subject, folds=2
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or traceback
+      description: Paste the relevant error output. Remove paths, tokens and personal data.
+      render: shell
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Engine
+        - API / jobs
+        - Web UI
+        - Docker / deployment
+        - Documentation
+        - Plugin
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "0.4.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, Node, browser and whether Docker is used.
+      placeholder: "Windows 11, Python 3.12, Node 22, Chrome 130, Docker Desktop"
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed secrets, tokens, private data and subject-identifying information.
+          required: true
+        - label: I searched existing issues for the same problem.
+          required: true

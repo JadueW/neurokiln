@@ -1,0 +1,55 @@
+{
+  "id": "mu_beta_erd",
+  "name": "μ 节律方差 + LDA",
+  "version": "1.0.0",
+  "schema_version": 2,
+  "engine_min_version": "0.1.0",
+  "api_version": 1,
+  "description": "8–13 Hz μ 节律的通道方差特征，配合训练折内标准化与收缩 LDA。声明式 DAG，不包含第三方代码，可在受限模式直接启用。",
+  "author": "NeuroKiln",
+  "license": "Apache-2.0",
+  "runtime": "graph",
+  "permissions": ["graph"],
+  "tags": ["MI", "ERD", "LDA"],
+  "pipelines": [
+    {
+      "id": "mu_variance_lda",
+      "name": "μ 节律方差 + LDA",
+      "paradigm": "MI",
+      "description": "带通 8–13 Hz → 通道标准差 → 标准化 → 收缩 LDA；所有统计量仅来自训练折。",
+      "graph": {
+        "nodes": [
+          {
+            "id": "bp",
+            "type": "preprocess.bandpass",
+            "params": {"low": 8.0, "high": 13.0, "order": 4},
+            "label": "8–13 Hz 带通"
+          },
+          {
+            "id": "var",
+            "type": "feature.channel_std",
+            "params": {},
+            "label": "通道标准差"
+          },
+          {
+            "id": "scale",
+            "type": "feature.standardize",
+            "params": {},
+            "label": "训练折标准化"
+          },
+          {
+            "id": "clf",
+            "type": "decoder.lda",
+            "params": {"shrinkage": "auto"},
+            "label": "收缩 LDA"
+          }
+        ],
+        "edges": [
+          {"source": "bp", "target": "var"},
+          {"source": "var", "target": "scale"},
+          {"source": "scale", "target": "clf"}
+        ]
+      }
+    }
+  ]
+}

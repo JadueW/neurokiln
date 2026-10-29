@@ -1,0 +1,6 @@
+NeuroKiln
+Copyright 2026 NeuroKiln Contributors
+
+This product includes software developed by the NeuroKiln project.
+Third-party dependencies remain under their own licenses; see
+engine/pyproject.toml, server/requirements.txt and web/package.json.

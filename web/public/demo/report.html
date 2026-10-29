@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroKiln · 实验 #1 报告</title>
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 32px; background: #eef2f6; color: #1f2933;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.6; }
+main { max-width: 1180px; margin: 0 auto; background: #fff; border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(31, 45, 61, .12); overflow: hidden; }
+header { padding: 34px 42px 28px; color: #fff; background:
+  linear-gradient(135deg, #1d2a44 0%, #223a63 52%, #14538a 100%); }
+header .eyebrow { letter-spacing: .18em; font-size: 12px; opacity: .68; text-transform: uppercase; }
+header h1 { margin: 8px 0 10px; font-size: 27px; font-weight: 650; }
+header .meta { display: flex; flex-wrap: wrap; gap: 8px 26px; font-size: 13px; opacity: .86; }
+section { padding: 26px 42px; border-bottom: 1px solid #e8edf3; }
+section:last-child { border-bottom: 0; }
+h2 { margin: 0 0 16px; font-size: 18px; color: #16233a; display: flex; align-items: center; gap: 9px; }
+h2::before { content: ""; width: 4px; height: 18px; border-radius: 2px; background: #2f6fb1; }
+h3 { margin: 20px 0 10px; font-size: 14px; color: #31425c; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.card { padding: 15px 18px; border: 1px solid #e3eaf3; border-radius: 10px; background: #f8fafc; }
+.card .label { font-size: 12px; color: #6b7c93; }
+.card .value { margin-top: 4px; font-size: 21px; font-weight: 650; color: #1c3d68; }
+.card .hint { margin-top: 2px; font-size: 11px; color: #8a97a8; word-break: break-all; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 9px 11px; text-align: left; border-bottom: 1px solid #edf1f6; vertical-align: top; }
+th { background: #f4f7fb; color: #50617a; font-weight: 600; white-space: nowrap; }
+tbody tr:hover { background: #fafcff; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; background: #e9f0fa; color: #2b5f9e; }
+.tag.bad { background: #fdecec; color: #b23c3c; }
+.tag.good { background: #e8f7ef; color: #217a4b; }
+.note { margin: 10px 0 0; padding: 10px 14px; border-radius: 8px; background: #f4f8fd;
+  border-left: 3px solid #4c86c8; color: #40536c; font-size: 12.5px; }
+.bar { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.bar .name { width: 150px; font-size: 12.5px; color: #35475f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar .track { flex: 1; height: 13px; border-radius: 7px; background: #eef2f7; overflow: hidden; }
+.bar .fill { height: 100%; border-radius: 7px; background: linear-gradient(90deg, #4d8bcb, #2f6fb1); }
+.bar .value { width: 56px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cm { display: inline-block; margin: 0 18px 18px 0; vertical-align: top; }
+.cm table { width: auto; }
+.cm td, .cm th { text-align: center; min-width: 44px; padding: 6px 8px; }
+.cm td.hot { color: #fff; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: #2f6fb1; font-size: 12.5px; }
+footer { padding: 20px 42px 28px; color: #8a97a8; font-size: 11.5px; background: #fafcfe; }
+@media print { body { padding: 0; background: #fff; } main { box-shadow: none; border-radius: 0; } section { break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<div class="demo-banner">
+  <strong>只读演示</strong>
+  <span>该报告使用内置合成 EEG 生成，仅用于展示评测流程，不代表真实 BCI 性能。</span>
+  <a href="/demo/index.html">返回演示首页</a>
+</div>
+<style>
+.demo-banner { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center;
+  margin:0 0 16px; padding:14px 18px; border-radius:10px; background:#fff7e6;
+  border:1px solid #f5dab1; color:#7a4d10; font-size:13px; }
+.demo-banner strong { color:#a35c00; }
+.demo-banner a { margin-left:auto; color:#2f6fb1; text-decoration:none; }
+</style>
+
+<main>
+<header>
+  <div class="eyebrow">NeuroKiln · Brain–Computer Interface Algorithm Evaluation</div>
+  <h1>黄金演示 · 只读报告</h1>
+  <div class="meta">
+    <span>实验 #1</span>
+    <span>数据集 合成演示数据（引擎自检） · v1</span>
+    <span>协议 within_subject</span>
+    <span>状态 completed</span>
+    <span>生成于 2026-10-30 00:46</span>
+  </div>
+</header>
+<section>
+  <div class="cards"><div class="card"><div class="label">最佳算法</div><div class="value">Riemann MDM</div><div class="hint">BA 0.7750</div></div><div class="card"><div class="label">检验单位 / 样本量</div><div class="value">折 4</div><div class="hint">4 折 · 8 次运行 · 种子 [0]</div></div><div class="card"><div class="label">Friedman p</div><div class="value">—</div><div class="hint">未达显著</div></div><div class="card"><div class="label">显著算法对</div><div class="value">0</div><div class="hint">Holm 校正，α=0.05</div></div><div class="card"><div class="label">总耗时</div><div class="value">2.7 s</div><div class="hint">引擎 0.4.0</div></div></div>
+  <p class="note">所有预处理统计量、特征提取与分类器参数仅在训练折拟合；预测来自留出折。数据签名
+  <span class="mono">81e14ff5c7f8165b7d7927e68d458d25114123dface97890d56b411dd314797b</span> 用于识别数据集版本。</p>
+</section>
+<section>
+  <h2>算法排名</h2>
+  <div class="bar"><div class="name">Riemann MDM</div><div class="track"><div class="fill" style="width:77.5%"></div></div><div class="value">0.775</div></div><div class="bar"><div class="name">CSP + LDA</div><div class="track"><div class="fill" style="width:67.5%"></div></div><div class="value">0.675</div></div>
+  <div style="margin-top:14px"><table><thead><tr><th class="num">#</th><th>算法</th><th class="num">平衡准确率</th><th class="num">标准差</th><th class="num">95% CI</th><th class="num">Cohen κ</th><th class="num">ECE</th><th class="num">平均单折耗时</th><th class="num">折数</th></tr></thead><tbody><tr><td class="num">1</td><td><strong>Riemann MDM</strong><div class="mono">riemann_mdm</div></td><td class="num">0.7750</td><td class="num">± 0.0829</td><td class="num">[0.700, 0.850]</td><td class="num">0.5500</td><td class="num">0.2118</td><td class="num">531.6 ms</td><td class="num">4</td></tr><tr><td class="num">2</td><td><strong>CSP + LDA</strong><div class="mono">csp_lda</div></td><td class="num">0.6750</td><td class="num">± 0.1090</td><td class="num">[0.550, 0.775]</td><td class="num">0.3500</td><td class="num">0.2563</td><td class="num">151.1 ms</td><td class="num">4</td></tr></tbody></table></div>
+</section>
+<section>
+  <h2>统计检验</h2><p class="note">以折为检验单位（n=4）；仅有一个被试（或没有共同被试），无法进行被试级推断；已回退到折级检验。 Friedman 检验跨算法比较同一折上的平衡准确率；Nemenyi 临界距离基于 Demsar (2006) 的平均秩方法。</p><p class="note">Friedman 检验需要至少 3 个算法与 2 个检验单位</p><h3>平均秩（秩越小越好）</h3><table><thead><tr><th>算法</th><th class="num">平均秩</th><th class="num">平均 BA</th></tr></thead><tbody><tr><td>riemann_mdm</td><td class="num">2.50</td><td class="num">0.7750</td></tr><tr><td>csp_lda</td><td class="num">2.50</td><td class="num">0.6750</td></tr></tbody></table><p class="note">Nemenyi 临界距离 CD = <strong>0.980</strong>（α=0.05，4 折）。</p><h3>Wilcoxon 符号秩检验（Holm 校正）</h3><table><thead><tr><th>算法对</th><th class="num">统计量</th><th class="num">原始 p</th><th class="num">校正 p</th><th>结论</th></tr></thead><tbody><tr><td>riemann_mdm vs csp_lda</td><td class="num">0.000</td><td class="num">0.2500</td><td class="num">0.2500</td><td><span class="tag">不显著</span></td></tr></tbody></table>
+</section>
+<section>
+  <h2>概率校准</h2>
+  <p class="note">校准指标基于各折留出预测的概率拼接计算：ECE 为按样本加权的 置信度–正确率偏差，Brier 为多分类平方误差，NLL 为真实类别负对数似然。概率来自训练折拟合的模型，测试折只参与评估。</p><div class="cards"><div class="card"><div class="label">CSP + LDA</div><div class="value">ECE 0.2563</div><div class="hint">Brier 0.4659 · NLL 0.7883 · 40 试次</div></div><div class="card"><div class="label">Riemann MDM</div><div class="value">ECE 0.2118</div><div class="hint">Brier 0.3132 · NLL 0.4912 · 40 试次</div></div></div><h3>CSP + LDA</h3><table><thead><tr><th class="num">置信度区间</th><th class="num">平均置信度</th><th class="num">实际正确率</th><th class="num">试次数</th></tr></thead><tbody><tr><td class="num">0.5–0.6</td><td class="num">0.5524</td><td class="num">0.3333</td><td class="num">3</td></tr><tr><td class="num">0.6–0.7</td><td class="num">0.6529</td><td class="num">0.5000</td><td class="num">2</td></tr><tr><td class="num">0.7–0.8</td><td class="num">0.7595</td><td class="num">0.3333</td><td class="num">6</td></tr><tr><td class="num">0.8–0.9</td><td class="num">0.8804</td><td class="num">0.5000</td><td class="num">2</td></tr><tr><td class="num">0.9–1.0</td><td class="num">0.9651</td><td class="num">0.8148</td><td class="num">27</td></tr></tbody></table><h3>Riemann MDM</h3><table><thead><tr><th class="num">置信度区间</th><th class="num">平均置信度</th><th class="num">实际正确率</th><th class="num">试次数</th></tr></thead><tbody><tr><td class="num">0.5–0.6</td><td class="num">0.5496</td><td class="num">0.4706</td><td class="num">17</td></tr><tr><td class="num">0.6–0.7</td><td class="num">0.6483</td><td class="num">1.0000</td><td class="num">10</td></tr><tr><td class="num">0.7–0.8</td><td class="num">0.7456</td><td class="num">1.0000</td><td class="num">10</td></tr><tr><td class="num">0.8–0.9</td><td class="num">0.8505</td><td class="num">1.0000</td><td class="num">3</td></tr></tbody></table>
+</section>
+<section>
+  <h2>混淆矩阵（全折汇总）</h2>
+  <div class="cm"><h3>CSP + LDA</h3><table><thead><tr><th>真实 \ 预测</th><th>类别 0</th><th>类别 1</th></tr></thead><tbody><tr><th>类别 0</th><td class="" style="background:rgba(47,111,177,0.48)">13</td><td class="" style="background:rgba(47,111,177,0.08)">7</td></tr><tr><th>类别 1</th><td class="" style="background:rgba(47,111,177,0.07)">6</td><td class="hot" style="background:#2f6fb1;color:#fff">14</td></tr></tbody></table></div><div class="cm"><h3>Riemann MDM</h3><table><thead><tr><th>真实 \ 预测</th><th>类别 0</th><th>类别 1</th></tr></thead><tbody><tr><th>类别 0</th><td class="hot" style="background:#2f6fb1;color:#fff">15</td><td class="" style="background:rgba(47,111,177,0.06)">5</td></tr><tr><th>类别 1</th><td class="" style="background:rgba(47,111,177,0.04)">4</td><td class="hot" style="background:#2f6fb1;color:#fff">16</td></tr></tbody></table></div>
+</section>
+<section>
+  <h2>实验配置</h2>
+  <table>
+    <tbody>
+      <tr><th>数据集</th><td>合成演示数据（引擎自检） <span class="mono">81e14ff5c7f8165b7d7927e68d458d25114123dface97890d56b411dd314797b</span></td></tr>
+      <tr><th>被试</th><td>S01</td></tr>
+      <tr><th>试次 / 通道 / 采样率</th><td>40 / 8 / 128.0 Hz</td></tr>
+      <tr><th>协议参数</th><td class="mono">{&#x27;folds&#x27;: 4, &#x27;repeats&#x27;: 1, &#x27;seeds&#x27;: [0]}</td></tr>
+      <tr><th>备注</th><td>内置合成 EEG，仅用于展示评测流程。</td></tr>
+    </tbody>
+  </table>
+</section>
+<section>
+  <h2>逐折明细</h2>
+  <details><summary>Riemann MDM · 逐折明细</summary><table><thead><tr><th class="num">Fold</th><th class="num">Repeat</th><th class="num">Seed</th><th class="num">训练试次</th><th class="num">测试试次</th><th class="num">平衡准确率</th><th class="num">Cohen κ</th><th class="num">耗时</th></tr></thead><tbody><tr><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.7000</td><td class="num">0.4000</td><td class="num">2020.2 ms</td></tr><tr><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.7000</td><td class="num">0.4000</td><td class="num">35.4 ms</td></tr><tr><td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.9000</td><td class="num">0.8000</td><td class="num">36.5 ms</td></tr><tr><td class="num">3</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.8000</td><td class="num">0.6000</td><td class="num">34.3 ms</td></tr></tbody></table></details><details><summary>CSP + LDA · 逐折明细</summary><table><thead><tr><th class="num">Fold</th><th class="num">Repeat</th><th class="num">Seed</th><th class="num">训练试次</th><th class="num">测试试次</th><th class="num">平衡准确率</th><th class="num">Cohen κ</th><th class="num">耗时</th></tr></thead><tbody><tr><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.5000</td><td class="num">0.0000</td><td class="num">587.4 ms</td></tr><tr><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.7000</td><td class="num">0.4000</td><td class="num">5.9 ms</td></tr><tr><td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.8000</td><td class="num">0.6000</td><td class="num">5.8 ms</td></tr><tr><td class="num">3</td><td class="num">0</td><td class="num">0</td><td class="num">30</td><td class="num">10</td><td class="num">0.7000</td><td class="num">0.4000</td><td class="num">5.2 ms</td></tr></tbody></table></details>
+</section>
+<footer>
+  由 NeuroKiln 自动生成 · 引擎 0.4.0 · 本报告不包含可识别被试身份的信息。
+</footer>
+</main>
+</body>
+</html>

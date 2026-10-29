@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a node, dataset adapter, protocol, report or workflow improvement.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What research or engineering problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the expected behavior and any alternatives considered.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Dataset adapter
+        - Preprocessing node
+        - Feature node
+        - Decoder
+        - Protocol / leakage guard
+        - HPO / templates
+        - Reports / exports
+        - Web UI
+        - Plugin system
+        - Deployment
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: References
+      description: Papers, dataset licenses or prior art that support the request.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: The proposal preserves leakage-safe fitting inside training folds.
+          required: true
+        - label: The proposal does not make medical or diagnostic claims.
+          required: true
