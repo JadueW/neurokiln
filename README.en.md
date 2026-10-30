@@ -15,7 +15,13 @@
 </p>
 
 <p align="center">
-  <a href="README.md">中文</a> · <a href="docs/user-manual.md">Manual</a> · <a href="docs/online-closed-loop.md">Online / closed loop</a> · <a href="docs/security.md">Security model</a>
+  <a href="https://github.com/JadueW/neurokiln/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JadueW/neurokiln/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/JadueW/neurokiln/releases"><img alt="Release" src="https://img.shields.io/github/v/release/JadueW/neurokiln"></a>
+  <a href="https://jaduew.github.io/neurokiln/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-2ea44f.svg"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">中文</a> · <a href="https://jaduew.github.io/neurokiln/">Documentation</a> · <a href="docs/user-manual.md">Manual</a> · <a href="docs/online-closed-loop.md">Online / closed loop</a> · <a href="docs/security.md">Security model</a>
 </p>
 
 ---
@@ -54,7 +60,16 @@ Every run stores its data version, splits, node parameters, environment, metrics
 ### Docker (recommended)
 
 ```bash
-# from the repository root
+# published image (linux/amd64, linux/arm64)
+docker pull ghcr.io/jaduew/neurokiln:0.4.0
+docker run -d --name neurokiln -p 127.0.0.1:8100:8100 \
+  -e NEUROKILN_DATA_DIR=/data -v neurokiln-data:/data \
+  ghcr.io/jaduew/neurokiln:0.4.0
+```
+
+Or build locally from the repository root:
+
+```bash
 docker compose up -d --build
 ```
 

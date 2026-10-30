@@ -15,7 +15,13 @@
 </p>
 
 <p align="center">
-  <a href="README.en.md">English</a> · <a href="docs/user-manual.md">用户手册</a> · <a href="docs/online-closed-loop.md">在线闭环</a> · <a href="docs/security.md">安全模型</a>
+  <a href="https://github.com/JadueW/neurokiln/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JadueW/neurokiln/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/JadueW/neurokiln/releases"><img alt="Release" src="https://img.shields.io/github/v/release/JadueW/neurokiln"></a>
+  <a href="https://jaduew.github.io/neurokiln/"><img alt="Docs" src="https://img.shields.io/badge/docs-online-2ea44f.svg"></a>
+</p>
+
+<p align="center">
+  <a href="README.en.md">English</a> · <a href="https://jaduew.github.io/neurokiln/">文档站</a> · <a href="docs/user-manual.md">用户手册</a> · <a href="docs/online-closed-loop.md">在线闭环</a> · <a href="docs/security.md">安全模型</a>
 </p>
 
 ---
@@ -53,7 +59,16 @@ NeuroKiln 用一条强制流水线解决这三件事：
 ### Docker（推荐）
 
 ```bash
-# 在仓库根目录
+# 拉取已发布镜像（linux/amd64、linux/arm64）
+docker pull ghcr.io/jaduew/neurokiln:0.4.0
+docker run -d --name neurokiln -p 127.0.0.1:8100:8100 \
+  -e NEUROKILN_DATA_DIR=/data -v neurokiln-data:/data \
+  ghcr.io/jaduew/neurokiln:0.4.0
+```
+
+或在仓库根目录自行构建：
+
+```bash
 docker compose up -d --build
 ```
 

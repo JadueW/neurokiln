@@ -1,12 +1,15 @@
 import { defineConfig } from 'vitepress'
 
+const base = process.env.DOCS_BASE || '/'
+
 export default defineConfig({
   lang: 'zh-CN',
   title: 'NeuroKiln',
   description: '可复现、防泄漏的 BCI 算法评测与调参平台',
+  base,
   cleanUrls: true,
   head: [
-    ['link', { rel: 'icon', type: 'image/png', href: '/logo.png' }],
+    ['link', { rel: 'icon', type: 'image/png', href: `${base}logo.png` }],
     ['meta', { name: 'theme-color', content: '#0b1220' }],
   ],
   themeConfig: {
