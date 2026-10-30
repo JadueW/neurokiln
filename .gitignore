@@ -16,7 +16,7 @@ dist/
 *.tsbuildinfo
 
 # Runtime data, secrets and logs
-data/
+/data/
 *.db
 *.db-wal
 *.db-shm

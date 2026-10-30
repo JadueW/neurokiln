@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 datasets = ["mne>=1.6", "moabb>=1.0"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "python-docx>=1.1"]
 
 [project.scripts]
 neurokiln = "neurokiln.cli:main"
