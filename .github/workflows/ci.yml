@@ -63,8 +63,6 @@ jobs:
   api:
     name: API functional smoke
     runs-on: ubuntu-latest
-    env:
-      NEUROKILN_DATA_DIR: ${{ runner.temp }}/neurokiln-ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -81,6 +79,8 @@ jobs:
           python -m pip install -r server/requirements.txt
           python -m pip install httpx
       - name: Bootstrap, login and call protected routes
+        env:
+          NEUROKILN_DATA_DIR: ${{ runner.temp }}/neurokiln-ci
         run: |
           python - <<'PY'
           import sys
