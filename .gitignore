@@ -15,20 +15,74 @@ dist/
 .vite/
 *.tsbuildinfo
 
-# Runtime data, secrets and logs
+# Local datasets and experiment artifacts (never commit)
 /data/
+/imports/
+/cache/
+/exports/
+/artifacts/
+/outputs/
+/runs/
+/bundles/
+/reports/
+/logs/
+mne_data/
+.mne/
 *.db
+*.db-journal
 *.db-wal
 *.db-shm
-.auth_secret
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.edf
+*.bdf
+*.gdf
+*.fif
+*.fif.gz
+*.set
+*.fdt
+*.vhdr
+*.vmrk
+*.eeg
+*.cnt
+*.avg
+*.mff/
+*.cdt
+*.egi
+*.nwb
+*.npy
+*.npz
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+*.joblib
+*.mat
 *.log
-imports/
-cache/
 
-# Environment
+# Credentials and local configuration
+.auth_secret
+.auth_secret.*
 .env
 .env.*
 !.env.example
+.npmrc
+.pypirc
+.netrc
+.git-credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+credentials*.json
+client_secret*.json
+service-account*.json
 
 # Docs build
 docs/.vitepress/cache/
@@ -39,15 +93,29 @@ test-results/
 playwright-report/
 blob-report/
 
-# OS / editor
+# Local assistant and editor overrides
+.qoder/
+.claude/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
 .DS_Store
 Thumbs.db
-.idea/
-.vscode/
-*.swp
+desktop.ini
 
 # Local exports
+*.csv
+*.tsv
 *.docx
 *.xlsx
+*.xls
+*.pptx
 *.pdf
 !docs/assets/*.pdf
