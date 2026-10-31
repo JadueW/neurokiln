@@ -25,6 +25,10 @@ features:
     details: 灰狼优化 + Pareto 存档，代理折筛选后完整复评，失败原因逐条记录。
   - title: 一键复现
     details: 每次实验记录数据签名、划分、参数与环境；导出复现包并按容差重跑比对。
+  - title: 模型透视
+    details: CSP / xDAWN / 卷积核内在参数与 topomap、遮挡与频带归因、Captum 梯度、忠实性检验、知识闭包审计，以及带支持计数的跨折聚合。
+  - title: 可恢复队列
+    details: 后台任务持久化，重启自动重排，实验与解释副作用幂等；失败重试上限可配置，错误码可直接映射中英文提示。
   - title: 论文级导出
     details: HTML、Excel、Word、LaTeX 与 GB/T 7714 参考文献，直接进入论文写作流程。
   - title: 本地优先

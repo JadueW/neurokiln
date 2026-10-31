@@ -60,6 +60,12 @@ pip install -r server\requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
+深度解码器的梯度归因（P2）还需要 Captum（可选）：
+
+```bat
+pip install -e engine[xai]
+```
+
 检查 CLI 是否可用：
 
 ```bat
@@ -87,6 +93,7 @@ cd neurokiln\server
 | `NEUROKILN_CACHE_ENTRIES` | 内存中缓存的 Epochs 份数 | `2` |
 | `NEUROKILN_PLUGIN_TRUST` | 设为 `1` 允许运行 Python 插件（进程内任意代码） | 未开启 |
 | `NEUROKILN_JOB_WORKERS` | 后台任务线程数 | `1` |
+| `NEUROKILN_JOB_MAX_ATTEMPTS` | 中断任务自动重排的最大尝试次数（含首次执行） | `3` |
 | `NEUROKILN_TOKEN_TTL` | 登录令牌有效期（秒） | `43200`（12 小时） |
 | `NEUROKILN_SECRET` | 覆盖令牌签名密钥（一般不用） | 读取 `data/.auth_secret` |
 
@@ -97,6 +104,8 @@ curl http://127.0.0.1:8100/api/health
 ```
 
 返回 `status: ok` 即表示 API、实验库和引擎均已就绪。
+
+所有 API 错误响应同时包含 `detail`（人类可读）与稳定的 `code`（如 `auth.invalid_credentials`、`job.retry_limit`、`explain.aggregate_dataset_mismatch`、`request.validation`）。前端按 `code` 渲染中英文提示，自动化脚本也应根据 `code` 而不是中文文案做分支。
 
 ### 2.4 启动 Web 控制台
 
@@ -386,6 +395,15 @@ Arena 会先尝试构造“丹方 × 被试”矩阵：
 
 后台任务默认 1 个 worker。任务状态为 `queued → running → completed / failed / cancelled`，可取消；训练循环与逐折边界都会检查取消令牌。页面刷新后可从“任务记录”恢复已完成结果。
 
+任务队列可恢复：每次提交都会把任务类型与完整参数写入 SQLite。服务重启时，处于 `queued` 或 `running` 的任务会自动重新排队（默认最多 3 次尝试，可用 `NEUROKILN_JOB_MAX_ATTEMPTS` 调整），并且：
+
+- Arena 实验以 `job_id` 幂等写入，重试不会产生重复实验；
+- 解释任务复用同一 `job_id` 的解释记录并重置为 `running`，断点重跑不会留下孤立的半成品；
+- 显式取消或正常关闭服务时，活跃任务会被标记为 `cancelled`，重启后不会被误恢复；
+- 超过尝试上限或缺少对应 runner 的任务会以 `job.retry_limit` / `job.no_recovery_factory` 失败，并在任务详情的 `error_code` 中给出原因。
+
+自动恢复假设单个 API 进程独占同一 SQLite 数据库；多进程部署（例如多个 uvicorn worker）会让多个进程同时重排同一任务，此时应改用外部队列。
+
 ### 7.2 比较的边界
 
 - 不同数据集、协议、折数、重复或种子集合的实验**不会**出现在同一张排行榜；
@@ -468,7 +486,51 @@ Arena 会先尝试构造“丹方 × 被试”矩阵：
 
 ---
 
-## 9. 报告中心
+## 9. 模型透视（可解释性）
+
+「模型透视」在**单被试、单划分**上打开已拟合模型：
+
+- 协议固定为 within_subject 分层 K 折，可选择折、重复与种子；
+- 只能分析内置算法（含 EEGNet / ShallowConvNet）；图 DAG 与插件丹方请先导出为等效内置算法；
+- 可关联一个已保存实验，仅用于归档与继承折数、重复和首个种子，不会改变实际划分。
+
+### 9.1 分析内容
+
+| 层级 | 产物 | 说明 |
+|---|---|---|
+| P0 内在参数 | CSP patterns、xDAWN 滤波器、MDM 通道方差比、空间卷积核 → topomap | 直接读取拟合参数，不经扰动 |
+| P1 遮挡 | 通道组 × 时间窗替换为训练折均值，记录决策分数下降 | 归因目标为预测类的 log-odds |
+| P1 频带消融 | 4–8 / 8–13 / 13–20 / 20–30 / 30–45 Hz 逐带移除 | 每个频带输出通道贡献 |
+| P2 梯度 | Captum Integrated Gradients / DeepLIFT | 仅 torch 解码器；需要 `engine[xai]` |
+| P1 忠实性 | 删除 / 插入 / 随机删除曲线、AUC、AOPC、半折稳定性 | 曲线按完整输入与全遮挡端点归一化 |
+| P3 知识审计 | 频带能量 + Hjorth 学生模型、closure ratio、surrogate R² | 检查性能能否由既有特征解释 |
+
+三条曲线（删除、插入、随机删除）的差距是判断归因是否可信的核心证据；若归一化不可用或半折稳定性过低，结果页会显示警告，不要把这类归因直接写入论文结论。
+
+### 9.2 结果与存储
+
+- 结果页展示指标卡、忠实性曲线、频带消融条形图、通道 × 时间热图、通道重要性表、知识审计与来源说明；
+- topomap 使用 10-10 电极坐标与反距离插值；未知电极退化为环形布局并明确标注；
+- 产物写入 `data/explanations/<job_id>/`：`global.json`、topomap PNG、`per_trial.json`（可用时附带 `per_trial.parquet`）；
+- 实验库 schema v6 的 `explanations` 表登记任务状态、`job_id`、摘要与警告；删除解释需要管理员，文件会一并移除；
+- 与实验关联的解释会自动出现在 HTML / Excel / Word / LaTeX 报告的「模型在看哪里」章节，并内嵌 topomap。
+
+所有拟合、遮挡基线与审计学生模型都只使用训练折；测试折仅用于评估与归因。
+
+### 9.3 跨折聚合
+
+结果页上方的“跨折聚合”会把当前数据集与算法下**已完成**的解释合并成一张跨折视图：
+
+- 每个通道、频带与指标只在真正包含它的解释上取均值，并在表中标注支持数 `n`；某折跳过梯度或频带时不会悄悄改变分母；
+- 只允许同一算法、同一数据签名；混用算法或跨数据集会被拒绝（API 返回 400）；
+- 输出 BA、删除/插入 AUC、AOPC 等指标的 mean / std / min / max，稳健通道表（按 |遮挡| 排序）、频带得分、各折明细与聚合警告，可导出聚合 JSON；
+- API：`GET /api/explanations/aggregate?dataset_id=&pipeline=&experiment_id=&limit=`。
+
+真实数据回归：设置 `NEUROKILN_GOLDEN=1` 与 `NEUROKILN_MNE_DATA` 后运行 `engine/tests/test_golden_2a_explain.py`，会在 BCI Competition IV 2a 的 S01 上完成两折解释、faithfulness 检查与跨折聚合。
+
+---
+
+## 10. 报告中心
 
 每次保存的 Arena 实验都可以生成：
 
@@ -486,9 +548,9 @@ Excel 与 HTML 都由实验库中的逐试次预测聚合生成，不依赖运�
 
 ---
 
-## 10. 可复现包
+## 11. 可复现包
 
-### 10.1 导出
+### 11.1 导出
 
 Web：报告中心 → 选择实验 → 导出可复现包。
 
@@ -500,7 +562,7 @@ neurokiln export --experiment 12 --out D:\repro\exp12
 
 输出目录必须为空或不存在，避免覆盖已有结果。
 
-### 10.2 包内容
+### 11.2 包内容
 
 | 文件/目录 | 内容 |
 |---|---|
@@ -516,7 +578,7 @@ neurokiln export --experiment 12 --out D:\repro\exp12
 
 使用插件丹方的实验会在 `pipelines/*.json` 中记录插件 ID、版本与包 SHA-256。复现时系统按这些字段校验本地插件；插件未安装、未启用、版本或哈希不一致都会拒绝执行。
 
-### 10.3 复现与容差
+### 11.3 复现与容差
 
 ```bat
 neurokiln reproduce D:\repro\exp12
@@ -536,11 +598,11 @@ neurokiln reproduce 12 --tolerance 0.01 --save
 
 ---
 
-## 11. CLI 参考
+## 12. CLI 参考
 
 安装后可用 `neurokiln`，也可用 `python -m neurokiln.cli`（需在 `engine` 目录或已把它加入 `PYTHONPATH`）。
 
-### 11.1 全局参数
+### 12.1 全局参数
 
 | 参数 | 作用 |
 |---|---|
@@ -548,7 +610,7 @@ neurokiln reproduce 12 --tolerance 0.01 --save
 | `--db` | 实验库路径；默认 `<data-dir>/neurokiln.db` |
 | `--mne-data` | MOABB/MNE 缓存目录 |
 
-### 11.2 `list-datasets`
+### 12.2 `list-datasets`
 
 ```bat
 neurokiln list-datasets
@@ -556,7 +618,7 @@ neurokiln list-datasets --dataset bciciv2a
 neurokiln list-datasets --json
 ```
 
-### 11.3 `run`（单丹方）
+### 12.3 `run`（单丹方）
 
 ```bat
 neurokiln run --dataset bciciv2a --subjects S01 --classes 4 ^
@@ -564,7 +626,7 @@ neurokiln run --dataset bciciv2a --subjects S01 --classes 4 ^
   --pipeline csp_lda --name "2a-S01-CSP"
 ```
 
-### 11.4 `arena`（多丹方）
+### 12.4 `arena`（多丹方）
 
 ```bat
 neurokiln arena --dataset bciciv2a --subjects S01,S02,S03 ^
@@ -582,21 +644,21 @@ neurokiln arena --dataset bciciv2a --subjects S01,S02,S03 ^
 - `--export-dir` 会在保存后自动导出可复现包；
 - `--json` 输出机器可读结果（不含逐试次数组）。
 
-### 11.5 `report`
+### 12.5 `report`
 
 ```bat
 neurokiln report --experiment 12 --out D:\reports\exp12.html ^
   --xlsx D:\reports\exp12.xlsx --bundle D:\repro\exp12
 ```
 
-### 11.6 `export`
+### 12.6 `export`
 
 ```bat
 neurokiln export --experiment 12 --out D:\repro\exp12
 neurokiln export --experiment 12 --out D:\repro\exp12 --no-report
 ```
 
-### 11.7 `reproduce`
+### 12.7 `reproduce`
 
 ```bat
 neurokiln reproduce 12
@@ -607,7 +669,7 @@ neurokiln reproduce D:\repro\exp12 --allow-data-mismatch
 
 `reproduce` 接受实验 ID 或 bundle 目录；返回码可用于 CI 断言。
 
-### 11.8 常用组合
+### 12.8 常用组合
 
 ```bat
 :: 只要结果不落库
@@ -622,7 +684,7 @@ neurokiln report --experiment 3 --out report-3.html --xlsx report-3.xlsx ^
   --bundle D:\repro\exp3
 ```
 
-### 11.9 `cache`
+### 12.9 `cache`
 
 ```bat
 neurokiln cache
@@ -632,7 +694,7 @@ neurokiln cache --clear
 
 `cache` 读取 `<data-dir>/cache/preprocess/` 的条目数、字节数、上限、命中/未命中/写入/淘汰计数与命中率；`--clear` 清空缓存并重置计数，仅影响派生文件，不影响实验库和已导入数据。
 
-### 11.10 插件丹方
+### 12.10 插件丹方
 
 ```bat
 neurokiln arena --dataset synthetic --pipeline raw_centroid ^
@@ -641,7 +703,7 @@ neurokiln arena --dataset synthetic --pipeline raw_centroid ^
 
 插件必须先通过 Web“插件市场”或 API 安装并启用。CLI 从 `--data-dir` 下的 `plugins/` 读取插件；Python 插件同样受 `NEUROKILN_PLUGIN_TRUST` 控制。
 
-### 11.11 插件校验
+### 12.11 插件校验
 
 ```bat
 neurokiln plugin validate path\to\plugin
@@ -659,7 +721,7 @@ neurokiln plugin validate path\to\plugin.zip --strict --json
 
 ---
 
-## 12. 在线与闭环扩展
+## 13. 在线与闭环扩展
 
 引擎提供轻量的在线 / 闭环扩展点，用于把离线验证过的解码器接入逐试次决策流程。它**不包含实时设备驱动、LSL / BrainFlow 集成、时钟同步或延迟保证**，也不构成在线或临床性能承诺。
 
@@ -684,7 +746,7 @@ neurokiln online-replay --dataset synthetic --pipeline csp_lda ^
 
 ---
 
-## 13. 数据目录、实验库与备份
+## 14. 数据目录、实验库与备份
 
 默认数据目录结构：
 
@@ -706,7 +768,8 @@ SQLite 主要表：
 - `datasets`：数据清单与签名；
 - `custom_pipelines`：自定义 DAG；
 - `users`：账号；
-- `jobs`：后台任务状态与结果。
+- `jobs`：后台任务状态、尝试次数 `attempts`、错误码 `error_code` 与结果；
+- `explanations`：解释任务状态、`job_id`、产物目录、摘要与警告。
 
 备份：停止 API 后复制整个 `data/` 目录即可（WAL 模式下请确保进程已退出）。恢复时把目录放回原位再启动。
 
@@ -714,7 +777,7 @@ SQLite 主要表：
 
 ---
 
-## 14. 常见问题
+## 15. 常见问题
 
 **Q：`/api/hpo/templates` 返回 404 / 页面提示接口不存在？**
 A：API 进程仍在运行旧代码。停止进程后重启 uvicorn；前端热更新不会重启 Python 服务。
@@ -763,7 +826,7 @@ A：需要。报告接口与其他 `/api/*` 一样走 Bearer Token，不使用�
 
 ---
 
-## 15. 测试、CI 与金标准回归
+## 16. 测试、CI 与金标准回归
 
 引擎测试：
 
@@ -772,7 +835,7 @@ cd neurokiln\engine
 ..\.venv312\Scripts\python.exe -m pytest -q
 ```
 
-截至本文档：`124 passed, 2 skipped`。跳过项包含需要真实数据开关的金标准回归。测试覆盖协议无重叠、训练折 fit 隔离、拆分安全缓存、概率校准、插件清单 v2/哈希/路径校验、多解码器融合、命名端口隔离、节点输入数据类型校验、自定义 HPO 模板搜索空间校验、SQLite 往返与 bundle 复现等。
+截至本文档：引擎测试 `140 passed, 3 skipped`，`server/tests` 为 `8 passed`，合计 `148 passed, 3 skipped`。跳过项包括需要真实数据开关的 MOABB 集成与 2a 金标准/解释回归。测试覆盖协议无重叠、训练折 fit 隔离、拆分安全缓存、概率校准、插件清单 v2/哈希/路径校验、多解码器融合、命名端口隔离、节点输入数据类型校验、自定义 HPO 模板搜索空间校验、SQLite 往返与 bundle 复现、任务恢复与幂等、结构化错误码、可解释性产物、跨折聚合与报告章节等。
 
 一键本地 CI：
 
@@ -784,7 +847,7 @@ bash scripts/ci.sh
 powershell -ExecutionPolicy Bypass -File scripts/ci.ps1
 ```
 
-脚本依次执行引擎测试、API `TestClient` 冒烟（健康检查 + 未认证 401）、Web 生产构建；Node 依赖缺失时会自动 `npm ci`。GitHub Actions 工作流在 `.github/workflows/ci.yml`，包含 Python 3.10/3.12 矩阵、API 冒烟与 Web 构建。**当前工作区不是 Git 仓库，工作流只有推送到 GitHub 后才会触发。**
+脚本依次执行引擎测试、API `TestClient` 冒烟（健康检查 + 未认证 401）、解释 API 生命周期测试、Web 生产构建；Node 依赖缺失时会自动 `npm ci`。GitHub Actions 工作流在 `.github/workflows/ci.yml`，包含 Python 3.10/3.12 矩阵、Windows 冒烟、API 功能冒烟与解释 API、Docker 构建与健康检查、Web/文档构建，以及 Playwright 关键路径 E2E。**当前工作区不是 Git 仓库，工作流只有推送到 GitHub 后才会触发。**
 
 真实 2a 金标准回归（需要本地 MOABB 缓存）：
 
@@ -796,9 +859,29 @@ set NEUROKILN_MNE_DATA=D:\data\mne
 
 回归覆盖 CSP+LDA、FBCSP+LDA、Riemann MDM 三条管线在 2a 上的指标区间；用于发现协议、预处理或划分逻辑的回归，而不是追求单次最高分。
 
+真实 2a 解释回归与跨折聚合：
+
+```bat
+set NEUROKILN_GOLDEN=1
+set NEUROKILN_MNE_DATA=D:\data\mne
+..\.venv312\Scripts\python.exe -m pytest tests\test_golden_2a_explain.py -q
+```
+
+该测试在 S01 上完成两折解释，断言训练折背景、BA 区间、频带/遮挡/删除 AUC 产物与两折聚合的通道支持数。
+
+关键路径 E2E（Playwright）：
+
+```bat
+cd web
+npm run test:e2e:install
+npm run test:e2e
+```
+
+`test:e2e` 会先构建前端，再用独立临时数据目录启动 API，覆盖首次管理员初始化、登录、黄金演示到报告、模型透视运行、跨折聚合面板以及英文错误提示。测试数据不会写入日常 `data/` 目录；API 默认监听 `8110`（可用 `NEUROKILN_E2E_PORT` 覆盖）。本机未下载 Playwright Chromium 时，可设置 `PLAYWRIGHT_CHANNEL=chrome` 复用系统 Chrome。
+
 ---
 
-## 16. 术语与免责声明
+## 17. 术语与免责声明
 
 | 术语 | 含义 |
 |---|---|
@@ -814,5 +897,8 @@ set NEUROKILN_MNE_DATA=D:\data\mne
 | 可靠性曲线 | 按置信度分箱统计平均置信度、实际正确率与试次数 |
 | 图插件 | 只含声明式 DAG 清单、不执行第三方代码的插件 |
 | 可信模式 | 允许 Python 插件在 API 进程内执行的启动开关，无沙箱 |
+| 模型透视 | 单折、模型无关的可解释性分析：内在参数、遮挡、频带、梯度、忠实性与知识审计 |
+| log-odds | 目标类相对其余类的对数几率差，遮挡与忠实性曲线的分数单位 |
+| closure ratio | 透明特征学生模型 BA / 被测模型 BA，衡量已知频带能量与 Hjorth 特征的可解释比例 |
 
 **免责声明**：本工具输出的离线指标只反映特定数据、协议和随机种子下的统计表现，不构成在线 BCI 性能承诺，也不构成任何临床诊断或治疗建议。使用公开数据集时请遵守其许可与引用要求；使用私有数据时请自行完成伦理审批、脱敏与访问控制。

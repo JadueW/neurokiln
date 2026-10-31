@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -32,6 +33,11 @@ from neurokiln.data import (  # noqa: E402
     write_epochs_npz,
 )
 from neurokiln.evaluate import RunCancelled  # noqa: E402
+from neurokiln.explain import (  # noqa: E402
+    ExplanationConfig,
+    aggregate_explanations,
+    run_explanation,
+)
 from neurokiln.graph import (  # noqa: E402
     GraphValidationError,
     build_graph_pipeline,
@@ -46,13 +52,15 @@ from neurokiln.hpo import (  # noqa: E402
     run_hpo,
     template_catalog,
 )
-from neurokiln.pipeline import PIPELINE_DEFINITIONS, torch_available  # noqa: E402
+from neurokiln.pipeline import PIPELINE_DEFINITIONS, Pipeline, torch_available  # noqa: E402
 from neurokiln.plugins import PluginError, PluginManager  # noqa: E402
 from neurokiln.protocol import build_protocol  # noqa: E402
 from neurokiln.report import build_docx, build_html_report, build_latex, build_workbook  # noqa: E402
 from neurokiln.runner import (  # noqa: E402
     ExperimentRequest,
+    ensure_paradigm_compatible,
     infer_spec_paradigm,
+    resolve_pipelines,
     run_experiment,
 )
 from neurokiln.store import ExperimentStore  # noqa: E402
@@ -65,6 +73,7 @@ from neurokiln.templates import (  # noqa: E402
 )
 
 from .auth import AuthService  # noqa: E402
+from .errors import ApiError, install_error_handlers  # noqa: E402
 from .jobs import JobCancelled, JobManager  # noqa: E402
 
 DATA_ROOT = Path(
@@ -77,6 +86,7 @@ DB_PATH = Path(os.environ.get("NEUROKILN_DB", str(DATA_ROOT / "neurokiln.db")))
 SECRET_PATH = Path(
     os.environ.get("NEUROKILN_AUTH_SECRET_FILE", str(DATA_ROOT / ".auth_secret"))
 )
+EXPLANATION_ROOT = DATA_ROOT / "explanations"
 registry = DatasetRegistry(
     DATA_ROOT,
     cache_entries=int(os.environ.get("NEUROKILN_CACHE_ENTRIES", "2")),
@@ -91,10 +101,12 @@ auth = AuthService(
 jobs = JobManager(
     DB_PATH,
     max_workers=int(os.environ.get("NEUROKILN_JOB_WORKERS", "1")),
+    max_attempts=int(os.environ.get("NEUROKILN_JOB_MAX_ATTEMPTS", "3")),
 )
 plugins = PluginManager(DATA_ROOT / "plugins")
 
 app = FastAPI(title="NeuroKiln API", version="0.4.0")
+install_error_handlers(app)
 
 PUBLIC_API_PATHS = {
     "/api/health",
@@ -119,7 +131,7 @@ async def auth_middleware(request: Request, call_next):
     if payload is None:
         return JSONResponse(
             status_code=401,
-            content={"detail": "未登录或登录已过期"},
+            content={"detail": "未登录或登录已过期", "code": "auth.token_invalid"},
             headers={"WWW-Authenticate": "Bearer"},
         )
     request.state.user = payload
@@ -205,6 +217,18 @@ class ArenaRequest(ProtocolRequest):
     notes: str = ""
     save: bool = True
     use_cache: bool = True
+
+
+class ExplanationJobRequest(ProtocolRequest):
+    pipeline: str = "csp_lda"
+    experiment_id: int | None = None
+    fold: int = Field(0, ge=0, le=50)
+    repeat: int = Field(0, ge=0, le=50)
+    window_ms: int = Field(250, ge=50, le=2000)
+    max_blocks: int = Field(120, ge=8, le=600)
+    gradient_method: str = "integrated_gradients"
+    include_audit: bool = True
+    include_sanity: bool = True
 
 
 class HPOJobRequest(ProtocolRequest):
@@ -344,6 +368,7 @@ def _execute_arena(
     req: ArenaRequest,
     on_progress: Callable[[int, int, dict], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     result = run_experiment(
         registry,
@@ -362,6 +387,7 @@ def _execute_arena(
             notes=req.notes,
             save=req.save,
             use_cache=req.use_cache,
+            job_id=job_id,
         ),
         on_progress=on_progress,
         should_cancel=should_cancel,
@@ -375,13 +401,13 @@ def _execute_arena(
 def _current_user(request: Request) -> dict[str, Any]:
     user = getattr(request.state, "user", None)
     if not user:
-        raise HTTPException(status_code=401, detail="未登录")
+        raise ApiError(401, "未登录", "auth.required")
     return user
 
 
 def _require_admin(user: dict[str, Any] = Depends(_current_user)) -> dict[str, Any]:
     if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+        raise ApiError(403, "需要管理员权限", "auth.admin_required")
     return user
 
 
@@ -430,7 +456,7 @@ def auth_bootstrap(credentials: AuthCredentials):
     try:
         user = auth.bootstrap(credentials.username, credentials.password)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ApiError(400, str(exc), "auth.invalid_bootstrap") from exc
     return auth.issue_token(user)
 
 
@@ -438,7 +464,7 @@ def auth_bootstrap(credentials: AuthCredentials):
 def auth_login(credentials: AuthCredentials):
     user = auth.authenticate(credentials.username, credentials.password)
     if user is None:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise ApiError(401, "用户名或密码错误", "auth.invalid_credentials")
     return auth.issue_token(user)
 
 
@@ -446,7 +472,7 @@ def auth_login(credentials: AuthCredentials):
 def auth_me(user: dict[str, Any] = Depends(_current_user)):
     fresh = auth.get_user(int(user["sub"]))
     if fresh is None:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise ApiError(401, "用户不存在", "auth.user_missing")
     return fresh
 
 
@@ -464,7 +490,7 @@ def auth_create_user(
     try:
         return auth.create_user(payload.username, payload.password, payload.role)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ApiError(400, str(exc), "auth.invalid_user") from exc
 
 
 @app.delete("/api/auth/users/{user_id}")
@@ -473,12 +499,12 @@ def auth_delete_user(
     user: dict[str, Any] = Depends(_require_admin),
 ):
     if int(user["sub"]) == user_id:
-        raise HTTPException(status_code=400, detail="不能删除当前登录账号")
+        raise ApiError(400, "不能删除当前登录账号", "auth.self_delete")
     try:
         if not auth.delete_user(user_id):
-            raise HTTPException(status_code=404, detail="用户不存在")
+            raise ApiError(404, "用户不存在", "auth.user_not_found")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ApiError(400, str(exc), "auth.invalid_user") from exc
     return {"deleted": True, "id": user_id}
 
 
@@ -1220,7 +1246,10 @@ def _run_arena_job(req: ArenaRequest):
 
         try:
             return _execute_arena(
-                req, on_progress=report, should_cancel=should_cancel
+                req,
+                on_progress=report,
+                should_cancel=should_cancel,
+                job_id=job_id,
             )
         except RunCancelled as exc:
             raise JobCancelled(str(exc)) from exc
@@ -1330,14 +1359,14 @@ def list_jobs(
 def get_job(job_id: str):
     job = jobs.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise ApiError(404, "任务不存在", "job.not_found")
     return job
 
 
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str):
     if not jobs.cancel(job_id):
-        raise HTTPException(status_code=404, detail="任务不存在或已结束")
+        raise ApiError(404, "任务不存在或已结束", "job.not_finished")
     return {"cancel_requested": True, "id": job_id}
 
 
@@ -1373,15 +1402,21 @@ def experiment_stats():
 def get_experiment(experiment_id: int):
     detail = store.get_experiment(experiment_id)
     if detail is None:
-        raise HTTPException(status_code=404, detail="实验不存在")
+        raise ApiError(404, "实验不存在", "experiment.not_found")
+    return detail
+
+
+def _report_detail(experiment_id: int) -> dict[str, Any]:
+    detail = store.get_experiment(experiment_id)
+    if detail is None:
+        raise ApiError(404, "实验不存在", "experiment.not_found")
+    detail["explanations"] = _explanation_report_items(experiment_id)
     return detail
 
 
 @app.get("/api/experiments/{experiment_id}/report.html")
 def experiment_report_html(experiment_id: int):
-    detail = store.get_experiment(experiment_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="实验不存在")
+    detail = _report_detail(experiment_id)
     return Response(
         content=build_html_report(detail),
         media_type="text/html; charset=utf-8",
@@ -1393,9 +1428,7 @@ def experiment_report_html(experiment_id: int):
 
 @app.get("/api/experiments/{experiment_id}/report.xlsx")
 def experiment_report_xlsx(experiment_id: int):
-    detail = store.get_experiment(experiment_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="实验不存在")
+    detail = _report_detail(experiment_id)
     return Response(
         content=build_workbook(detail),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1407,9 +1440,7 @@ def experiment_report_xlsx(experiment_id: int):
 
 @app.get("/api/experiments/{experiment_id}/report.docx")
 def experiment_report_docx(experiment_id: int):
-    detail = store.get_experiment(experiment_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="实验不存在")
+    detail = _report_detail(experiment_id)
     return Response(
         content=build_docx(detail),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1421,9 +1452,7 @@ def experiment_report_docx(experiment_id: int):
 
 @app.get("/api/experiments/{experiment_id}/report.tex")
 def experiment_report_latex(experiment_id: int):
-    detail = store.get_experiment(experiment_id)
-    if detail is None:
-        raise HTTPException(status_code=404, detail="实验不存在")
+    detail = _report_detail(experiment_id)
     return Response(
         content=build_latex(detail),
         media_type="application/x-tex; charset=utf-8",
@@ -1436,8 +1465,310 @@ def experiment_report_latex(experiment_id: int):
 @app.delete("/api/experiments/{experiment_id}")
 def delete_experiment(experiment_id: int, _user: dict[str, Any] = Depends(_require_admin)):
     if not store.delete_experiment(experiment_id):
-        raise HTTPException(status_code=404, detail="实验不存在")
+        raise ApiError(404, "实验不存在", "experiment.not_found")
     return {"deleted": True, "id": experiment_id}
+
+
+def _resolve_explanation_pipeline(req: ExplanationJobRequest) -> dict[str, Any]:
+    if req.gradient_method not in {"integrated_gradients", "deeplift", "none"}:
+        raise ValueError("gradient_method 仅支持 integrated_gradients / deeplift / none")
+    definitions, instances = resolve_pipelines([req.pipeline], store, plugins)
+    if not isinstance(instances[0], Pipeline):
+        raise ValueError(
+            "可解释性分析目前支持内置线性算法与 EEGNet/ShallowConvNet；"
+            "图 DAG / 插件算法请先导出为等效内置算法。"
+        )
+    return definitions[0]
+
+
+def _explanation_split(req: ExplanationJobRequest, epochs):
+    seeds = tuple(req.seeds) or (0,)
+    splits = build_protocol(
+        req.protocol, folds=req.folds, repeats=req.repeats, seeds=seeds
+    ).split(epochs)
+    wanted_seed = seeds[0]
+    for split in splits:
+        if (
+            split.fold == req.fold
+            and split.repeat == req.repeat
+            and split.seed == wanted_seed
+        ):
+            return split
+    raise ValueError(
+        f"找不到 fold={req.fold} repeat={req.repeat} seed={wanted_seed} 的划分"
+    )
+
+
+def _run_explanation_job(req: ExplanationJobRequest, definition: dict[str, Any]):
+    def runner(job_id, on_progress, should_cancel):
+        directory = EXPLANATION_ROOT / job_id
+        explanation_id = None
+        try:
+            epochs = _load_epochs(req)
+            ensure_paradigm_compatible(definition, epochs.paradigm, req.pipeline)
+            split = _explanation_split(req, epochs)
+            _, instances = resolve_pipelines([req.pipeline], store, plugins)
+            existing = store.get_explanation_by_job_id(job_id)
+            if existing is not None:
+                explanation_id = int(existing["id"])
+                store.restart_explanation(explanation_id)
+            else:
+                explanation_id = store.create_explanation(
+                    pipeline=req.pipeline,
+                    pipeline_name=str(definition.get("name") or req.pipeline),
+                    folder=str(directory),
+                    experiment_id=req.experiment_id,
+                    dataset_id=req.dataset_id,
+                    job_id=job_id,
+                    fold=req.fold,
+                    repeat=req.repeat,
+                    seed=split.seed,
+                )
+            config = ExplanationConfig(
+                pipeline_id=req.pipeline,
+                fold=req.fold,
+                repeat=req.repeat,
+                window_ms=req.window_ms,
+                max_blocks=req.max_blocks,
+                gradient_method=req.gradient_method,
+                include_audit=req.include_audit,
+                include_sanity=req.include_sanity,
+            )
+            result = run_explanation(
+                epochs,
+                instances[0],
+                split,
+                directory,
+                config,
+                explanation_id=str(explanation_id),
+                experiment_id=req.experiment_id,
+                pipeline_name=str(definition.get("name") or req.pipeline),
+                should_cancel=should_cancel,
+                on_progress=on_progress,
+            )
+        except RunCancelled as exc:
+            if explanation_id is not None:
+                store.fail_explanation(explanation_id, "已取消")
+            raise JobCancelled(str(exc)) from exc
+        except Exception as exc:
+            if explanation_id is not None:
+                store.fail_explanation(explanation_id, f"{type(exc).__name__}: {exc}")
+            raise
+        store.finish_explanation(
+            explanation_id,
+            folder=str(directory),
+            summary=result["summary"],
+            warnings=result["summary"].get("warnings") or [],
+            duration_ms=result["duration_ms"],
+        )
+        return {
+            "explanation_id": explanation_id,
+            "directory": str(directory),
+            "summary": result["summary"],
+        }
+
+    return runner
+
+
+@app.post("/api/explanations/jobs")
+def submit_explanation_job(req: ExplanationJobRequest):
+    try:
+        definition = _resolve_explanation_pipeline(req)
+    except ValueError as exc:
+        raise ApiError(400, str(exc), "explain.invalid_request") from exc
+    if req.experiment_id is not None and store.get_experiment(req.experiment_id) is None:
+        raise ApiError(404, "实验不存在", "experiment.not_found")
+    job = jobs.submit(
+        "explanation", req.model_dump(), _run_explanation_job(req, definition)
+    )
+    return {
+        "id": job["id"],
+        "status": job["status"],
+        "progress": job.get("progress", 0.0),
+        "message": job.get("message", ""),
+        "pipeline": req.pipeline,
+        "pipeline_name": definition.get("name"),
+    }
+
+
+@app.get("/api/explanations")
+def list_explanations(
+    experiment_id: int | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    items, total = store.list_explanations(
+        experiment_id=experiment_id, limit=limit, offset=offset
+    )
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+def _explanation_document(item: dict[str, Any]) -> dict[str, Any] | None:
+    directory = item.get("directory")
+    if not directory:
+        return None
+    path = Path(directory) / "global.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _explanation_images(item: dict[str, Any], document: dict[str, Any]) -> dict[str, str]:
+    images: dict[str, str] = {}
+    directory = Path(item["directory"]).resolve() if item.get("directory") else None
+    if directory is None:
+        return images
+    candidates = [
+        (document.get("occlusion") or {}).get("topomap"),
+        (document.get("bands") or {}).get("topomap"),
+        (document.get("gradient") or {}).get("topomap"),
+        (document.get("audit") or {}).get("topomap"),
+    ]
+    for entry in document.get("intrinsic") or []:
+        candidates.append(entry.get("topomap"))
+        candidates += [
+            per_class.get("topomap") for per_class in entry.get("per_class") or []
+        ]
+    for asset in candidates:
+        if not asset or asset in images:
+            continue
+        try:
+            path = (directory / asset).resolve()
+            path.relative_to(directory)
+        except (ValueError, OSError):
+            continue
+        if path.is_file():
+            images[asset] = (
+                "data:image/png;base64,"
+                + base64.b64encode(path.read_bytes()).decode("ascii")
+            )
+    return images
+
+
+def _explanation_report_items(experiment_id: int) -> list[dict[str, Any]]:
+    items, _ = store.list_explanations(experiment_id=experiment_id, limit=100)
+    attached = []
+    for item in items:
+        if item.get("status") != "completed":
+            continue
+        document = _explanation_document(item)
+        if not document:
+            continue
+        attached.append(
+            {**item, "document": document, "images": _explanation_images(item, document)}
+        )
+    return attached
+
+
+@app.get("/api/explanations/aggregate")
+def aggregate_explanations_endpoint(
+    experiment_id: int | None = None,
+    pipeline: str | None = None,
+    dataset_id: str | None = None,
+    limit: int = Query(100, ge=2, le=500),
+):
+    items, _ = store.list_explanations(
+        experiment_id=experiment_id,
+        pipeline=pipeline,
+        status="completed",
+        limit=limit,
+    )
+    documents = []
+    for item in items:
+        if dataset_id and str(item.get("dataset_id") or "") != str(dataset_id):
+            continue
+        document = _explanation_document(item)
+        if document is not None:
+            documents.append(document)
+    try:
+        return aggregate_explanations(documents)
+    except ValueError as exc:
+        code = getattr(exc, "code", "explain.aggregate_failed")
+        raise ApiError(400, str(exc), code) from exc
+
+
+@app.get("/api/explanations/{explanation_id}")
+def get_explanation(explanation_id: int):
+    item = store.get_explanation(explanation_id)
+    if item is None:
+        raise ApiError(404, "解释不存在", "explain.not_found")
+    document = _explanation_document(item)
+    return {
+        **item,
+        "document": document,
+        "images": _explanation_images(item, document) if document else {},
+    }
+
+
+@app.get("/api/explanations/{explanation_id}/assets/{asset_path:path}")
+def explanation_asset(explanation_id: int, asset_path: str):
+    item = store.get_explanation(explanation_id)
+    if item is None or not item.get("directory"):
+        raise ApiError(404, "解释不存在", "explain.not_found")
+    directory = Path(item["directory"]).resolve()
+    try:
+        target = (directory / asset_path).resolve()
+        target.relative_to(directory)
+    except (ValueError, OSError):
+        raise ApiError(404, "资产不存在", "explain.asset_not_found") from None
+    media_types = {
+        ".png": "image/png",
+        ".json": "application/json",
+        ".parquet": "application/vnd.apache.parquet",
+    }
+    media_type = media_types.get(target.suffix.lower())
+    if media_type is None or not target.is_file():
+        raise ApiError(404, "资产不存在", "explain.asset_not_found")
+    return FileResponse(target, media_type=media_type)
+
+
+@app.delete("/api/explanations/{explanation_id}")
+def delete_explanation(
+    explanation_id: int, _user: dict[str, Any] = Depends(_require_admin)
+):
+    item = store.delete_explanation(explanation_id)
+    if item is None:
+        raise ApiError(404, "解释不存在", "explain.not_found")
+    directory = item.get("directory")
+    if directory:
+        target = Path(directory)
+        if target.is_dir() and EXPLANATION_ROOT in target.resolve().parents:
+            shutil.rmtree(target, ignore_errors=True)
+    return {"deleted": True, "id": explanation_id}
+
+
+def _arena_job_factory(payload: dict[str, Any]):
+    return _run_arena_job(ArenaRequest(**payload))
+
+
+def _hpo_job_factory(payload: dict[str, Any]):
+    req = HPOJobRequest(**payload)
+    return _run_hpo_job(req, _resolve_hpo_template(req.template_id))
+
+
+def _explanation_job_factory(payload: dict[str, Any]):
+    req = ExplanationJobRequest(**payload)
+    return _run_explanation_job(req, _resolve_explanation_pipeline(req))
+
+
+jobs.register("arena", _arena_job_factory)
+jobs.register("hpo", _hpo_job_factory)
+jobs.register("explanation", _explanation_job_factory)
+jobs.recover()
+_active_jobs = jobs.active_ids()
+_running_explanations, _ = store.list_explanations(status="running", limit=1000)
+_orphan_jobs = [
+    str(item["job_id"])
+    for item in _running_explanations
+    if item.get("job_id") and str(item["job_id"]) not in _active_jobs
+]
+if _orphan_jobs:
+    store.fail_explanations_for_jobs(
+        _orphan_jobs, "服务重启后任务未能恢复，请重新提交"
+    )
 
 
 @app.on_event("shutdown")

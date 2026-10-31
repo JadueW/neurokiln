@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 from datetime import datetime
 from io import BytesIO
@@ -51,6 +52,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cm table { width: auto; }
 .cm td, .cm th { text-align: center; min-width: 44px; padding: 6px 8px; }
 .cm td.hot { color: #fff; }
+.xai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px; margin-top: 16px; }
+.xai-fig { margin: 0; padding: 10px; border: 1px solid #e3eaf3; border-radius: 10px;
+  background: #fbfdff; text-align: center; }
+.xai-fig img { width: 100%; max-width: 240px; image-rendering: auto; }
+.xai-fig figcaption { margin-top: 6px; font-size: 11.5px; color: #5b6b80; }
+.xai-warn { margin: 10px 0 0; padding-left: 20px; color: #8a5a12; font-size: 12.5px; }
 details { margin-top: 10px; }
 summary { cursor: pointer; color: #2f6fb1; font-size: 12.5px; }
 footer { padding: 20px 42px 28px; color: #8a97a8; font-size: 11.5px; background: #fafcfe; }
@@ -341,6 +349,192 @@ def _fold_table(row: dict[str, Any]) -> str:
     )
 
 
+def _explanation_items(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    items = []
+    for item in detail.get("explanations") or []:
+        if isinstance(item, dict) and (item.get("document") or item.get("summary")):
+            items.append(item)
+    return items
+
+
+def _xai_label(item: dict[str, Any]) -> str:
+    name = item.get("pipeline_name") or item.get("pipeline") or "算法"
+    return f"{name} · fold {item.get('fold', 0)}"
+
+
+def _xai_metrics(item: dict[str, Any]) -> list[tuple[str, str, str]]:
+    document = item.get("document") or {}
+    summary = item.get("summary") or {}
+    performance = summary.get("performance") or {}
+    faith = document.get("faithfulness") or {}
+    norm = faith.get("normalization") or {}
+    audit = document.get("audit") or {}
+    stability = (faith.get("stability") or {}).get("half_split_spearman")
+    usable = norm.get("usable", True)
+    return [
+        ("平衡准确率", _num(performance.get("balanced_accuracy")), "该折留出预测"),
+        (
+            "删除 AUC",
+            _num(faith.get("deletion_auc")),
+            "越低越忠实" if usable else "归一化不可用",
+        ),
+        (
+            "插入 AUC",
+            _num(faith.get("insertion_auc")),
+            "越高越忠实" if usable else "归一化不可用",
+        ),
+        ("随机删除 AUC", _num(faith.get("random_deletion_auc")), "对照基线"),
+        ("AOPC", _num(faith.get("aopc")), "前 8 步平均下降"),
+        (
+            "closure",
+            _num(audit.get("closure_ratio")),
+            "已知频带/Hjorth 可解释比例",
+        ),
+        (
+            "半折稳定性 ρ",
+            _num(stability),
+            "两半测试集通道排序一致性",
+        ),
+    ]
+
+
+def _xai_channel_rows(
+    item: dict[str, Any], limit: int = 12, formatted: bool = True
+) -> list[list[Any]]:
+    document = item.get("document") or {}
+    channels = (document.get("dataset") or {}).get("channel_names") or []
+    occlusion = document.get("occlusion") or {}
+    values = occlusion.get("channel_importance") or []
+    if not channels or len(values) != len(channels):
+        return []
+    intrinsic = (document.get("intrinsic") or [{}])[0] if document.get("intrinsic") else {}
+    intrinsic_values = intrinsic.get("values") or []
+    bands = document.get("bands") or {}
+    band_values = (bands.get("channel_importance") or {}).get(
+        "-".join(f"{value:g}" for value in (bands.get("topomap_band") or []))
+    ) or []
+    gradient = document.get("gradient") or {}
+    gradient_values = gradient.get("channel_magnitude") or []
+    audit = document.get("audit") or {}
+    audit_values = audit.get("channel_importance") or []
+
+    def value_at(collection, index):
+        if index >= len(collection) or collection[index] is None:
+            return "—" if formatted else None
+        return _num(collection[index], 4) if formatted else float(collection[index])
+
+    order = sorted(range(len(channels)), key=lambda index: -abs(values[index]))[:limit]
+    return [
+        [
+            channels[index],
+            _num(values[index], 4) if formatted else float(values[index]),
+            value_at(intrinsic_values, index),
+            value_at(band_values, index),
+            value_at(gradient_values, index),
+            value_at(audit_values, index),
+        ]
+        for index in order
+    ]
+
+
+def _xai_figures(item: dict[str, Any]) -> str:
+    document = item.get("document") or {}
+    images = item.get("images") or {}
+    figures = []
+
+    def figure(asset, caption):
+        if not asset or asset not in images:
+            return
+        figures.append(
+            f'<figure class="xai-fig"><img src="{images[asset]}" alt="{_e(caption)}">'
+            f"<figcaption>{_e(caption)}</figcaption></figure>"
+        )
+
+    figure((document.get("occlusion") or {}).get("topomap"), "遮挡归因（Δlog-odds）")
+    bands = document.get("bands") or {}
+    if bands.get("topomap"):
+        band_label = " / ".join(f"{value:g} Hz" for value in bands.get("topomap_band") or [])
+        figure(bands["topomap"], f"频带消融（{band_label}）")
+    figure((document.get("gradient") or {}).get("topomap"), "梯度归因")
+    for entry in (document.get("intrinsic") or [])[:2]:
+        figure(entry.get("topomap"), f"内在参数：{entry.get('label') or entry.get('id')}")
+    figure((document.get("audit") or {}).get("topomap"), "已知特征（频带能量）重要性")
+    if not figures:
+        return ""
+    return f'<div class="xai-grid">{"".join(figures)}</div>'
+
+
+def _explanations_section(detail: dict[str, Any]) -> str:
+    items = _explanation_items(detail)
+    if not items:
+        return (
+            '<p class="note">本次实验尚未生成可解释性分析。在「可解释性」页选择实验、'
+            "算法与折后运行，结果会自动出现在本报告中。</p>"
+        )
+    blocks = []
+    for item in items:
+        document = item.get("document") or {}
+        summary = item.get("summary") or {}
+        cards = "".join(
+            f'<div class="card"><div class="label">{_e(label)}</div>'
+            f'<div class="value">{_e(value)}</div><div class="hint">{_e(hint)}</div></div>'
+            for label, value, hint in _xai_metrics(item)
+        )
+        channel_rows = "".join(
+            "<tr>"
+            + "".join(f'<td class="num">{_e(cell)}</td>' for cell in row)
+            + "</tr>"
+            for row in _xai_channel_rows(item)
+        )
+        channel_table = (
+            '<table><thead><tr><th>通道</th><th class="num">遮挡 Δ</th>'
+            '<th class="num">内在参数</th><th class="num">频带消融</th>'
+            '<th class="num">梯度</th><th class="num">频带能量</th></tr></thead>'
+            f"<tbody>{channel_rows}</tbody></table>"
+            if channel_rows
+            else '<p class="note">该算法没有可映射到电极的通道重要性。</p>'
+        )
+        warnings = summary.get("warnings") or []
+        warning_html = (
+            '<ul class="xai-warn">'
+            + "".join(f"<li>{_e(message)}</li>" for message in warnings)
+            + "</ul>"
+            if warnings
+            else ""
+        )
+        faith = document.get("faithfulness") or {}
+        agreement = faith.get("agreement") or {}
+        agreement_bits = []
+        intrinsic_agreement = (agreement.get("intrinsic") or {}).get("spearman")
+        if intrinsic_agreement is not None:
+            agreement_bits.append(f"遮挡↔内在参数 ρ={float(intrinsic_agreement):.3f}")
+        gradient_agreement = (agreement.get("gradient") or {}).get("spearman")
+        if gradient_agreement is not None:
+            agreement_bits.append(f"遮挡↔梯度 ρ={float(gradient_agreement):.3f}")
+        sanity = document.get("sanity") or {}
+        if sanity.get("available") and sanity.get("spearman") is not None:
+            agreement_bits.append(f"权重随机化 ρ={float(sanity['spearman']):.3f}")
+        agreement_note = (
+            '<p class="note">' + _e("；".join(agreement_bits)) + "。</p>"
+            if agreement_bits
+            else ""
+        )
+        blocks.append(
+            f"<h3>{_e(_xai_label(item))}</h3>"
+            f'<div class="cards">{cards}</div>'
+            f"{_xai_figures(item)}"
+            f'<div style="margin-top:12px">{channel_table}</div>'
+            f"{agreement_note}{warning_html}"
+        )
+    prov = (items[0].get("document") or {}).get("provenance") or {}
+    note = (
+        "遮挡基线为训练折逐通道均值，测试折不参与任何拟合；"
+        "归因目标是模型自身预测类别的 log-odds。"
+        f"背景来源 {_e(prov.get('background', 'train_fold_only'))}。"
+    )
+    return f'<p class="note">{note}</p>' + "".join(blocks)
+
+
 def build_html_report(detail: dict[str, Any]) -> str:
     dataset = detail.get("dataset") or {}
     manifest = dataset.get("manifest") or {}
@@ -402,6 +596,10 @@ def build_html_report(detail: dict[str, Any]) -> str:
 <section>
   <h2>混淆矩阵（全折汇总）</h2>
   {_confusion_matrices(detail)}
+</section>
+<section>
+  <h2>模型在看哪里（可解释性）</h2>
+  {_explanations_section(detail)}
 </section>
 <section>
   <h2>实验配置</h2>
@@ -709,6 +907,70 @@ def build_workbook(detail: dict[str, Any]) -> bytes:
         row_cursor += 2
     autosize(matrix_sheet, {1: 24, 2: 14, 3: 14, 4: 14, 5: 14, 6: 14, 7: 14, 8: 14, 9: 14})
 
+    xai_items = _explanation_items(detail)
+    xai_sheet = book.create_sheet("模型在看哪里")
+    xai_headers = ["解释 ID", "算法", "Fold", "Repeat", "Seed", "平衡准确率",
+                   "删除 AUC", "插入 AUC", "随机删除 AUC", "AOPC", "closure",
+                   "半折稳定性 ρ", "归一化可用", "警告"]
+    xai_sheet.append(xai_headers)
+    style_header(xai_sheet, 1, len(xai_headers))
+    for item in xai_items:
+        document = item.get("document") or {}
+        summary = item.get("summary") or {}
+        faith = document.get("faithfulness") or {}
+        audit = document.get("audit") or {}
+        xai_sheet.append([
+            item.get("id"),
+            item.get("pipeline_name") or item.get("pipeline"),
+            item.get("fold"),
+            item.get("repeat"),
+            item.get("seed"),
+            (summary.get("performance") or {}).get("balanced_accuracy"),
+            faith.get("deletion_auc"),
+            faith.get("insertion_auc"),
+            faith.get("random_deletion_auc"),
+            faith.get("aopc"),
+            audit.get("closure_ratio"),
+            (faith.get("stability") or {}).get("half_split_spearman"),
+            "是" if (faith.get("normalization") or {}).get("usable", True) else "否",
+            _safe("；".join(summary.get("warnings") or [])),
+        ])
+    for row in xai_sheet.iter_rows(
+        min_row=2, max_row=xai_sheet.max_row, max_col=len(xai_headers)
+    ):
+        for cell in row:
+            cell.border = border
+        for index in (6, 7, 8, 9, 10, 11, 12):
+            row[index - 1].number_format = "0.0000"
+    autosize(xai_sheet, {1: 10, 2: 26, 3: 8, 4: 9, 5: 8, 6: 12, 7: 11, 8: 11,
+                         9: 14, 10: 10, 11: 10, 12: 12, 13: 12, 14: 60})
+    xai_sheet.freeze_panes = "A2"
+
+    xai_channel_sheet = book.create_sheet("解释通道重要性")
+    channel_headers = ["解释 ID", "算法", "通道", "遮挡 Δlog-odds",
+                       "内在参数", "频带消融", "梯度幅值", "频带能量"]
+    xai_channel_sheet.append(channel_headers)
+    style_header(xai_channel_sheet, 1, len(channel_headers))
+    for item in xai_items:
+        for row in _xai_channel_rows(item, limit=10_000, formatted=False):
+            xai_channel_sheet.append(
+                [
+                    item.get("id"),
+                    item.get("pipeline_name") or item.get("pipeline"),
+                    *row,
+                ]
+            )
+    for row in xai_channel_sheet.iter_rows(
+        min_row=2, max_row=xai_channel_sheet.max_row, max_col=len(channel_headers)
+    ):
+        for cell in row:
+            cell.border = border
+        for index in (4, 5, 6, 7, 8):
+            if isinstance(row[index - 1].value, (int, float)):
+                row[index - 1].number_format = "0.0000"
+    autosize(xai_channel_sheet, {1: 10, 2: 26, 3: 12, 4: 16, 5: 12, 6: 12, 7: 12, 8: 12})
+    xai_channel_sheet.freeze_panes = "A2"
+
     buffer = BytesIO()
     book.save(buffer)
     return buffer.getvalue()
@@ -956,6 +1218,53 @@ def build_docx(detail: dict[str, Any]) -> bytes:
         document.add_heading("混淆矩阵（全折汇总）", level=1)
         _docx_table(document, ["算法", "类别顺序", "矩阵行（真实 × 预测）"], matrix_rows)
 
+    xai_items = _explanation_items(detail)
+    if xai_items:
+        from docx.shared import Cm
+
+        document.add_heading("模型在看哪里（可解释性）", level=1)
+        document.add_paragraph(
+            "遮挡基线取训练折逐通道均值，测试折不参与任何拟合；"
+            "归因目标是模型自身预测类别的 log-odds。"
+        )
+        for item in xai_items:
+            document.add_heading(_xai_label(item), level=2)
+            _docx_table(
+                document,
+                ["指标", "数值", "说明"],
+                [[label, value, hint] for label, value, hint in _xai_metrics(item)],
+            )
+            document_data = item.get("document") or {}
+            images = item.get("images") or {}
+            figure_specs = [
+                ((document_data.get("occlusion") or {}).get("topomap"), "遮挡归因（Δlog-odds）"),
+                ((document_data.get("bands") or {}).get("topomap"), "频带消融"),
+                ((document_data.get("gradient") or {}).get("topomap"), "梯度归因"),
+            ]
+            for asset, caption in figure_specs:
+                uri = images.get(asset) if asset else None
+                if not uri or not uri.startswith("data:image/png;base64,"):
+                    continue
+                try:
+                    payload = base64.b64decode(uri.split(",", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                document.add_picture(BytesIO(payload), width=Cm(5.4))
+                note = document.add_paragraph(caption)
+                for run in note.runs:
+                    run.font.size = Pt(9)
+            channel_rows = _xai_channel_rows(item)
+            if channel_rows:
+                _docx_table(
+                    document,
+                    ["通道", "遮挡 Δ", "内在参数", "频带消融", "梯度", "频带能量"],
+                    channel_rows,
+                )
+            for message in (item.get("summary") or {}).get("warnings") or []:
+                paragraph = document.add_paragraph(f"注意：{message}")
+                for run in paragraph.runs:
+                    run.font.size = Pt(9)
+
     document.add_heading("参考文献", level=1)
     for index, entry in enumerate(_reference_entries(detail), start=1):
         paragraph = document.add_paragraph(f"[{index}] {entry}")
@@ -1093,6 +1402,33 @@ def build_latex(detail: dict[str, Any]) -> str:
             pairwise_rows,
             r"lrrrr",
         ))
+    xai_items = _explanation_items(detail)
+    if xai_items:
+        xai_rows = []
+        for item in xai_items:
+            document_data = item.get("document") or {}
+            faith = document_data.get("faithfulness") or {}
+            audit = document_data.get("audit") or {}
+            xai_rows.append([
+                item.get("pipeline_name") or item.get("pipeline"),
+                item.get("fold", 0),
+                _num(faith.get("deletion_auc")),
+                _num(faith.get("insertion_auc")),
+                _num(faith.get("random_deletion_auc")),
+                _num(faith.get("aopc")),
+                _num(audit.get("closure_ratio")),
+            ])
+        parts += [
+            r"\section*{模型在看哪里（可解释性）}",
+            r"\noindent 遮挡基线取训练折逐通道均值，测试折不参与任何拟合；"
+            r"归因目标是模型自身预测类别的 log-odds。删除曲线 AUC 越低、插入曲线 AUC 越高越忠实。"
+            r"地形图见 HTML/Web 报告。",
+            _tex_longtable(
+                ["算法", "Fold", "删除 AUC", "插入 AUC", "随机删除 AUC", "AOPC", "closure"],
+                xai_rows,
+                r"lcrrrrr",
+            ),
+        ]
     parts += [r"\section*{参考文献}", r"\begin{thebibliography}{99}"]
     for item in _reference_entries(detail):
         parts.append(r"\bibitem{} " + _tex_cell(item))

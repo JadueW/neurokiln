@@ -127,6 +127,9 @@ def test_store_roundtrip(tmp_path):
     assert stats["runs"] == 4
     assert stats["datasets_used"] == 1
     assert stats["best_run"]["pipeline"] == "csp_lda"
+    # 最佳结果用折均值，不能被单折最高分抬高
+    assert stats["best_run"]["balanced_accuracy"] == 0.8
+    assert stats["best_run"]["pipeline_name"] == "CSP + LDA"
 
     datasets = store.datasets()
     assert datasets[0]["id"] == "synthetic"
@@ -154,6 +157,24 @@ def test_store_delete_cascades_runs(tmp_path):
     assert store.delete_experiment(experiment_id) is False
 
 
+def test_store_best_run_uses_fold_mean(tmp_path):
+    store = ExperimentStore(tmp_path / "neurokiln.db")
+    store.record_experiment(**_record_kwargs())
+
+    rows = _arena_rows()
+    rows[0]["balanced_accuracy_mean"] = 0.6
+    rows[0]["splits"][0]["balanced_accuracy"] = 1.0
+    rows[0]["splits"][1]["balanced_accuracy"] = 0.2
+    weaker = _record_kwargs()
+    weaker.update(name="single-fold-spike", arena_rows=rows)
+    store.record_experiment(**weaker)
+
+    best = store.stats()["best_run"]
+    assert best["pipeline"] == "csp_lda"
+    assert best["balanced_accuracy"] == 0.8
+    assert best["name"] == "demo-run"
+
+
 def test_store_schema_version_and_filters(tmp_path):
     store = ExperimentStore(tmp_path / "neurokiln.db")
     store.record_experiment(**_record_kwargs())
@@ -170,6 +191,53 @@ def test_store_schema_version_and_filters(tmp_path):
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
         ).fetchone()[0]
     assert int(version) == SCHEMA_VERSION
+
+
+def test_store_experiment_is_idempotent_per_job(tmp_path):
+    store = ExperimentStore(tmp_path / "neurokiln.db")
+    kwargs = _record_kwargs()
+    kwargs["job_id"] = "job-arena-1"
+    first = store.record_experiment(**kwargs)
+    second = store.record_experiment(**kwargs)
+    assert first == second
+    items, total = store.list_experiments()
+    assert total == 1
+    assert items[0]["job_id"] == "job-arena-1"
+
+
+def test_explanation_job_reuse_restart_and_filters(tmp_path):
+    store = ExperimentStore(tmp_path / "neurokiln.db")
+    explanation_id = store.create_explanation(
+        pipeline="csp_lda",
+        pipeline_name="CSP + LDA",
+        folder=str(tmp_path / "explanation"),
+        job_id="job-xai-1",
+    )
+    item = store.get_explanation_by_job_id("job-xai-1")
+    assert item is not None
+    assert item["id"] == explanation_id
+    assert item["status"] == "running"
+
+    store.fail_explanation(explanation_id, "boom")
+    store.restart_explanation(explanation_id)
+    item = store.get_explanation(explanation_id)
+    assert item["status"] == "running"
+    assert item["error"] is None
+
+    store.finish_explanation(
+        explanation_id,
+        folder=str(tmp_path / "explanation"),
+        summary={"deletion_auc": 0.5},
+        warnings=["w"],
+        duration_ms=10.0,
+    )
+    items, total = store.list_explanations(
+        pipeline="csp_lda", status="completed"
+    )
+    assert total == 1
+    assert items[0]["summary"]["deletion_auc"] == 0.5
+
+    assert store.fail_explanations_for_jobs(["job-xai-1"], "orphan") == 0
 
 
 def test_store_mark_failed(tmp_path):

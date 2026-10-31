@@ -1,11 +1,13 @@
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, ScatterChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, HeatmapChart, LineChart, ScatterChart } from 'echarts/charts'
+import {
+  GridComponent, LegendComponent, TooltipComponent, VisualMapComponent,
+} from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([
-  BarChart, LineChart, ScatterChart,
-  GridComponent, LegendComponent, TooltipComponent, CanvasRenderer,
+  BarChart, HeatmapChart, LineChart, ScatterChart,
+  GridComponent, LegendComponent, TooltipComponent, VisualMapComponent, CanvasRenderer,
 ])
 
 export function createChart(el) {

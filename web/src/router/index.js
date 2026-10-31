@@ -12,6 +12,7 @@ export const menuRoutes = [
   { path: 'protocol', name: 'Protocol', component: () => import('@/views/protocol/index.vue'), meta: { titleKey: 'menu.protocol', icon: 'Grid' } },
   { path: 'arena', name: 'Arena', component: () => import('@/views/arena/index.vue'), meta: { titleKey: 'menu.arena', icon: 'Trophy' } },
   { path: 'hpo', name: 'Hpo', component: () => import('@/views/hpo/index.vue'), meta: { titleKey: 'menu.hpo', icon: 'Aim' } },
+  { path: 'xai', name: 'Xai', component: () => import('@/views/xai/index.vue'), meta: { titleKey: 'menu.xai', icon: 'View' } },
   { path: 'codex', name: 'Codex', component: () => import('@/views/codex/index.vue'), meta: { titleKey: 'menu.codex', icon: 'Collection' } },
   { path: 'plugins', name: 'Plugins', component: () => import('@/views/plugins/index.vue'), meta: { titleKey: 'menu.plugins', icon: 'Shop' } },
   { path: 'report', name: 'Report', component: () => import('@/views/report/index.vue'), meta: { titleKey: 'menu.report', icon: 'Document' } },

@@ -102,6 +102,9 @@ class CSP(Node):
             self.filters_ = _fit_csp_filters(X, y, n_components, self.reg)
         else:
             self.filters_ = _fit_csp_multiclass(X, y, n_components, self.reg)
+        # Spatial patterns are the columns of the pseudo-inverse: filter k's
+        # pattern tells which scalp locations project onto component k.
+        self.patterns_ = np.linalg.pinv(self.filters_)
         return self
 
     def transform(self, X):
@@ -148,15 +151,16 @@ class FilterBankCSP(Node):
         fit_filters = _fit_csp_filters if classes.size == 2 else _fit_csp_multiclass
         n_components = min(self.n_components, X.shape[1])
         self.filters_: list[np.ndarray] = []
+        self.patterns_: list[np.ndarray] = []
         self.sos_: list[np.ndarray] = []
         for low, high in self.bands:
             if low >= ctx.sfreq / 2.0:
                 continue
             sos = design_bandpass(low, high, ctx.sfreq)
             self.sos_.append(sos)
-            self.filters_.append(
-                fit_filters(filter_epochs(X, sos), y, n_components, self.reg)
-            )
+            filters = fit_filters(filter_epochs(X, sos), y, n_components, self.reg)
+            self.filters_.append(filters)
+            self.patterns_.append(np.linalg.pinv(filters))
         if not self.filters_:
             raise ValueError("no filter-bank band is below the Nyquist frequency")
         return self

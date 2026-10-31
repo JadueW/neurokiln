@@ -102,7 +102,7 @@
         v-if="job.status === 'failed'"
         type="error"
         :closable="false"
-        :title="job.error || $t('arena.jobFailed')"
+        :title="jobErrorMessage(job, $t('arena.jobFailed'))"
       />
       <el-alert
         v-if="job.status === 'cancelled'"
@@ -364,6 +364,7 @@ import {
 import { createChart } from '@/utils/chart'
 import { downloadWithAuth } from '@/utils/download'
 import { formatDuration, formatMetric, formatTime } from '@/utils/format'
+import { jobErrorMessage } from '@/utils/errors'
 import { selection, setDataset, subjectChoices } from '@/utils/selection'
 
 const { t } = useI18n()
@@ -675,7 +676,7 @@ async function pollJob(token) {
     if (latest.status === 'completed') {
       await applyResult(latest.result)
     } else if (latest.status === 'failed') {
-      ElMessage.error(latest.error || t('arena.backgroundJobFailed'))
+      ElMessage.error(jobErrorMessage(latest, t('arena.backgroundJobFailed')))
     }
   } catch {
     // the response interceptor already reported the error; stop this poll cycle

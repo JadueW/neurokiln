@@ -4,6 +4,7 @@ import csv
 import importlib.metadata
 import json
 import platform
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -262,6 +263,27 @@ def export_bundle(
     metrics_file = _write_metrics(detail, directory)
     predictions_file = _write_predictions(detail, directory)
 
+    explanations: list[dict[str, Any]] = []
+    explanation_items, _ = store.list_explanations(
+        experiment_id=int(experiment_id), limit=200
+    )
+    for item in explanation_items:
+        if item.get("status") != "completed" or not item.get("directory"):
+            continue
+        source = Path(item["directory"])
+        if not (source / "global.json").is_file():
+            continue
+        target = directory / "explanations" / str(item["id"])
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        explanations.append(
+            {
+                "id": item["id"],
+                "pipeline": item["pipeline"],
+                "folder": str(target.relative_to(directory)),
+                "summary": item.get("summary"),
+            }
+        )
+
     report_files = {}
     if include_report:
         html_path = directory / "report.html"
@@ -297,6 +319,10 @@ def export_bundle(
                 f"- `{metrics_file}`：逐折指标",
                 f"- `{predictions_file}`：逐试次预测",
                 "- `report.html` / `report.xlsx`：报告",
+                *(
+                    ["- `explanations/`：可解释性分析产物（global.json、逐试次与 topomap）"]
+                    if explanations else []
+                ),
                 "",
                 "复现：",
                 "```bash",
@@ -318,6 +344,7 @@ def export_bundle(
         "metrics": metrics_file,
         "predictions": predictions_file,
         "reports": report_files,
+        "explanations": explanations,
     }
 
 

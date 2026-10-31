@@ -2,7 +2,13 @@ from io import BytesIO
 
 import pytest
 
-from neurokiln.report import _tex, build_docx, build_latex
+from neurokiln.report import (
+    _tex,
+    build_docx,
+    build_html_report,
+    build_latex,
+    build_workbook,
+)
 
 
 @pytest.fixture()
@@ -111,3 +117,85 @@ def test_tex_escaping_handles_special_characters():
     assert _tex("a_b & 50% #1 {x} ~ ^ \\") == (
         r"a\_b \& 50\% \#1 \{x\} \textasciitilde{} \textasciicircum{} \textbackslash{}"
     )
+
+
+def _explanation_item():
+    return {
+        "id": 3,
+        "pipeline": "csp_lda",
+        "pipeline_name": "CSP + LDA",
+        "fold": 0,
+        "repeat": 0,
+        "seed": 0,
+        "status": "completed",
+        "summary": {
+            "performance": {"balanced_accuracy": 0.81},
+            "warnings": ["测试警告"],
+        },
+        "document": {
+            "dataset": {"channel_names": ["C3", "C4"]},
+            "faithfulness": {
+                "deletion_auc": 0.62,
+                "insertion_auc": 1.18,
+                "random_deletion_auc": 1.01,
+                "aopc": 0.12,
+                "normalization": {"usable": True},
+                "stability": {"half_split_spearman": 0.4},
+            },
+            "audit": {
+                "closure_ratio": 0.95,
+                "channel_importance": [0.3, 0.1],
+                "topomap": "audit.png",
+            },
+            "occlusion": {
+                "channel_importance": [0.4, -0.2],
+                "topomap": "occlusion.png",
+            },
+            "bands": {
+                "topomap": "band.png",
+                "topomap_band": [8, 13],
+                "channel_importance": {"8-13": [0.5, -0.1]},
+            },
+            "gradient": {"available": False},
+            "intrinsic": [
+                {
+                    "id": "csp_patterns",
+                    "label": "CSP 空间模式 × LDA 权重",
+                    "values": [1.0, -1.0],
+                    "topomap": "csp.png",
+                }
+            ],
+        },
+        "images": {
+            "occlusion.png": "data:image/png;base64,AAAA",
+            "csp.png": "data:image/png;base64,BBBB",
+        },
+    }
+
+
+def test_html_report_renders_explanation_section(detail):
+    detail = {**detail, "explanations": [_explanation_item()]}
+    html = build_html_report(detail)
+    assert "模型在看哪里（可解释性）" in html
+    assert "CSP + LDA · fold 0" in html
+    assert "删除 AUC" in html and "0.6200" in html
+    assert "测试警告" in html
+    assert "data:image/png;base64,AAAA" in html
+    assert "C3" in html and "0.4000" in html
+
+    empty = build_html_report({**detail, "explanations": []})
+    assert "本次实验尚未生成可解释性分析" in empty
+
+
+def test_workbook_contains_explanation_sheets(detail):
+    from openpyxl import load_workbook
+
+    detail = {**detail, "explanations": [_explanation_item()]}
+    book = load_workbook(BytesIO(build_workbook(detail)))
+    assert "模型在看哪里" in book.sheetnames
+    assert "解释通道重要性" in book.sheetnames
+    rows = list(book["模型在看哪里"].iter_rows(min_row=2, values_only=True))
+    assert rows and rows[0][1] == "CSP + LDA"
+    assert rows[0][6] == 0.62
+    channel_rows = list(book["解释通道重要性"].iter_rows(min_row=2, values_only=True))
+    assert channel_rows and channel_rows[0][2] == "C3"

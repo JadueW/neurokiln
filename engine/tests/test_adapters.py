@@ -110,6 +110,22 @@ def test_import_npz_guards(tmp_path):
     assert overwritten.name == "A2"
 
 
+def test_import_overwrite_drops_cached_epochs(tmp_path):
+    first = make_synthetic_epochs(n_trials_per_class=4, seed=1)
+    second = make_synthetic_epochs(n_trials_per_class=6, seed=2)
+    source = _write_npz(tmp_path / "source.npz", first)
+    updated = _write_npz(tmp_path / "updated.npz", second)
+    registry = DatasetRegistry(tmp_path / "data")
+
+    registry.import_npz(source, dataset_id="local-a", name="A")
+    assert registry.load("local-a").n_trials == first.n_trials
+
+    registry.import_npz(updated, dataset_id="local-a", name="A", overwrite=True)
+    reloaded = registry.load("local-a")
+    assert reloaded.n_trials == second.n_trials
+    np.testing.assert_allclose(reloaded.data, second.data)
+
+
 def test_registry_cache_is_bounded(tmp_path):
     registry = DatasetRegistry(tmp_path / "data", cache_entries=1)
     first = registry.load("synthetic")

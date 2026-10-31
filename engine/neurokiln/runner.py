@@ -30,6 +30,7 @@ class ExperimentRequest:
     notes: str = ""
     save: bool = True
     use_cache: bool = True
+    job_id: str | None = None
 
 
 def _dataset_public(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -267,6 +268,7 @@ def run_experiment(
             arena_rows=rows,
             duration_ms=duration_ms,
             notes=request.notes,
+            job_id=request.job_id,
         )
     return {
         "experiment_id": experiment_id,

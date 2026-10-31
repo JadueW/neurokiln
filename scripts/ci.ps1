@@ -50,6 +50,10 @@ try {
     }
 }
 
+Write-Host "[2b/3] explanation API tests"
+& $python -m pytest server/tests -q
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Write-Host "[3/3] web build"
 Push-Location (Join-Path $Root "web")
 try {

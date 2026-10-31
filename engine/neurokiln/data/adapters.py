@@ -746,6 +746,10 @@ class DatasetRegistry:
             json.dumps(sidecar, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # 覆盖导入后必须丢弃内存里的旧数据，否则实验会跑在与清单不一致的数据上
+        with self._lock:
+            for key in [key for key in self._cache if key[0] == dataset_id]:
+                self._cache.pop(key, None)
         return self.get_spec(dataset_id)
 
     def manifest(self, dataset_id: str, epochs: Epochs) -> dict[str, Any]:

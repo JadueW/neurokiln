@@ -254,10 +254,23 @@ class TorchDecoder(Node):
         model.train()
         return total / max(len(X), 1)
 
-    def transform(self, X: np.ndarray) -> np.ndarray:
+    def prepare(self, X: np.ndarray) -> np.ndarray:
+        """Resample, normalize and pad raw epochs for the network."""
         if not hasattr(self, "mean_"):
             raise RuntimeError("deep decoder must be fitted before transform")
         return self._prepare(X)
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """Identity by design: ``predict``/``predict_proba`` prepare internally.
+
+        Resampling here as well double-applied the 250 -> 128 Hz conversion
+        whenever a pipeline called ``transform`` before ``predict``, which
+        silently changed the input length for epochs longer than the model's
+        minimum and broke the final linear layer.
+        """
+        if not hasattr(self, "mean_"):
+            raise RuntimeError("deep decoder must be fitted before transform")
+        return np.asarray(X)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         torch = _torch()

@@ -39,6 +39,9 @@ with TestClient(app) as client:
 print("api smoke ok")
 PY
 
+echo "[2b/3] explanation API tests"
+"$PYTHON" -m pytest server/tests -q
+
 echo "[3/3] web build"
 cd "$ROOT/web"
 if [[ ! -d node_modules ]]; then

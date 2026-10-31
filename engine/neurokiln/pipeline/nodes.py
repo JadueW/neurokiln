@@ -155,18 +155,66 @@ def run_node_with_cache(
 
 
 @dataclass
+class NodeTrace:
+    """One fitted node plus the arrays it saw. Used by explainability only."""
+
+    index: int
+    name: str
+    kind: str
+    node: Node
+    train_input: np.ndarray
+    test_input: np.ndarray
+    train_output: np.ndarray
+    test_output: np.ndarray
+    sfreq: float
+    tmin: float
+
+
+@dataclass
+class FittedSplit:
+    """A fitted pipeline for one split, with per-node activations retained."""
+
+    pipeline: "Pipeline"
+    train_epochs: Epochs
+    test_epochs: Epochs
+    traces: list[NodeTrace]
+    result: dict
+
+    def transform_from_raw(self, X: np.ndarray) -> np.ndarray:
+        """Run the transform-only suffix (no refitting) on raw epochs."""
+        values = np.asarray(X)
+        for trace in self.traces:
+            values = np.asarray(trace.node.transform(values))
+        return values
+
+    def predict_from_raw(self, X: np.ndarray):
+        """Transform-only pass: no refitting, safe for perturbation oracles."""
+        values = self.transform_from_raw(X)
+        decoder = self.traces[-1].node
+        y_pred = np.asarray(decoder.predict(values), dtype=int)
+        y_proba, proba_classes = probability_output(decoder, values)
+        return y_pred, y_proba, proba_classes
+
+
+@dataclass
 class Pipeline:
     name: str
     nodes: list[Node] = field(default_factory=list)
 
-    def run_split(
+    def fit_split(
         self,
         epochs: Epochs,
         split: Split,
         should_cancel: Callable[[], bool] | None = None,
         cache: ArtifactCache | None = None,
         data_signature: str | None = None,
-    ) -> dict:
+    ) -> tuple[dict, FittedSplit]:
+        """Fit one split and keep every node's train/test activations.
+
+        ``run_split`` delegates here; the returned arrays are identical to the
+        ones used for prediction, so explanations always describe the model
+        that actually produced the reported metrics.
+        """
         train_epochs = epochs.select(split.train)
         test_epochs = epochs.select(split.test)
         X_train = train_epochs.data
@@ -191,7 +239,11 @@ class Pipeline:
         node_sfreq = float(epochs.sfreq)
         node_tmin = float(epochs.tmin)
         train_parent = test_parent = signature
-        for node in self.nodes:
+        traces: list[NodeTrace] = []
+        for index, node in enumerate(self.nodes):
+            input_sfreq, input_tmin = node_sfreq, node_tmin
+            input_train = np.asarray(X_train)
+            input_test = np.asarray(X_test)
             node_ctx = replace(ctx, sfreq=node_sfreq, tmin=node_tmin)
             X_train, X_test, (train_parent, test_parent) = run_node_with_cache(
                 node,
@@ -207,13 +259,27 @@ class Pipeline:
                 test_parents=(test_parent,),
                 context={**cache_context, "sfreq": node_sfreq, "tmin": node_tmin},
             )
+            traces.append(
+                NodeTrace(
+                    index=index,
+                    name=getattr(node, "name", type(node).__name__),
+                    kind=getattr(node, "kind", "transform"),
+                    node=node,
+                    train_input=input_train,
+                    test_input=input_test,
+                    train_output=np.asarray(X_train),
+                    test_output=np.asarray(X_test),
+                    sfreq=input_sfreq,
+                    tmin=input_tmin,
+                )
+            )
             node_sfreq, node_tmin = node.output_timebase(node_sfreq, node_tmin)
         decoder = self.nodes[-1]
         y_pred = np.asarray(decoder.predict(X_test), dtype=int)
         y_proba, proba_classes = probability_output(decoder, X_test)
         if y_pred.shape != test_epochs.labels.shape:
             raise ValueError("decoder returned predictions with wrong shape")
-        return {
+        result = {
             "y_true": test_epochs.labels,
             "y_pred": y_pred,
             "y_proba": y_proba,
@@ -224,3 +290,28 @@ class Pipeline:
             "test_session_ids": test_epochs.session_ids,
             "split": split,
         }
+        fitted = FittedSplit(
+            pipeline=self,
+            train_epochs=train_epochs,
+            test_epochs=test_epochs,
+            traces=traces,
+            result=result,
+        )
+        return result, fitted
+
+    def run_split(
+        self,
+        epochs: Epochs,
+        split: Split,
+        should_cancel: Callable[[], bool] | None = None,
+        cache: ArtifactCache | None = None,
+        data_signature: str | None = None,
+    ) -> dict:
+        result, _ = self.fit_split(
+            epochs,
+            split,
+            should_cancel=should_cancel,
+            cache=cache,
+            data_signature=data_signature,
+        )
+        return result

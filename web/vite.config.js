@@ -21,10 +21,13 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
-    port: 5174,
+    port: Number(process.env.VITE_PORT || 5174),
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://127.0.0.1:8100', changeOrigin: true },
+      '/api': {
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8100',
+        changeOrigin: true,
+      },
     },
   },
   build: {

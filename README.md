@@ -49,6 +49,7 @@ NeuroKiln 用一条强制流水线解决这三件事：
 | 丹方 | 30+ 节点的有向无环图（预处理 / 特征 / 解码器 / 融合），支持命名端口与滤波器组并行 |
 | 调参 | 灰狼优化 + 精英局部搜索 + Pareto 存档；代理折筛选后完整协议复评；支持自定义搜索空间 |
 | 统计 | 平衡准确率、Cohen's Kappa、被试级 bootstrap CI、配对检验、概率校准 |
+| 可解释性 | 内在参数 topomap、通道×时间遮挡、频带消融、Captum 梯度、faithfulness / 稳定性与知识闭包审计 |
 | 报告 | HTML / Excel，一键导出可复现包；论文级 Word / LaTeX / GB/T 7714 导出 |
 | 模板与复现 | 可移植 DAG 模板市场、论文复现目录、一键载入画布；插件清单 v2 与引擎版本兼容检查 |
 | 在线扩展 | 传输无关的流式数据源、在线解码器、置信度阈值策略与留出折回放 CLI |
@@ -89,6 +90,9 @@ source .venv/bin/activate
 
 pip install -e "./engine[datasets]"
 pip install -r server/requirements.txt
+
+# 可选：torch 解码器的 Captum 梯度归因
+pip install -e "./engine[xai]"
 
 cd web
 npm ci
@@ -191,6 +195,19 @@ neurokiln online-replay --dataset synthetic --pipeline csp_lda \
 - 自定义模板：保存的丹方加 1–16 个显式搜索维度，即可变成 `custom:<id>` 模板。
 - 搜索空间护栏：频带上下界、Nyquist 上限、CSP 分量数与正则约束会在提交前校验。
 
+## 模型透视（可解释性）
+
+「模型透视」对单被试、单折的已拟合模型做 P0–P3 分析，所有参考信号都来自训练折：
+
+- **内在参数**：CSP patterns、xDAWN 滤波器、MDM 通道方差比、EEGNet / ShallowConvNet 空间卷积核，渲染为 10-10 topomap；
+- **遮挡归因**：按通道组 × 时间窗把输入替换为训练折均值，记录 log-odds 下降；
+- **频带消融**：逐频带移除，量化 4–8 / 8–13 / 13–20 / 20–30 / 30–45 Hz 的通道贡献；
+- **梯度归因**：对 torch 解码器调用 Captum Integrated Gradients / DeepLIFT（可选依赖）；
+- **忠实性与稳定性**：删除 / 插入 / 随机删除曲线、AOPC、半折 Spearman 稳定性；
+- **知识审计**：用频带能量 + Hjorth 特征的透明学生模型计算 closure ratio，检查性能能否由既有特征解释。
+
+结果写入 `data/explanations/<job>/`（`global.json`、topomap PNG、逐试次归因），报告中心会自动加入「模型在看哪里」章节。
+
 ## 插件与安全模型
 
 - 插件清单 v2 声明 `engine_min_version`、入口、参数与文件哈希。
@@ -209,6 +226,7 @@ neurokiln online-replay --dataset synthetic --pipeline csp_lda \
 - [x] Docker、五分钟上手、分享卡片、论文级导出
 - [x] 模板市场、论文复现目录与插件版本兼容
 - [x] 在线 / 闭环 BCI 扩展点与留出折回放
+- [x] P0–P3 可解释性：内在参数、遮挡 / 频带归因、Captum 梯度与知识审计
 - [ ] 多用户协作与远程计算后端
 
 ## 参与贡献

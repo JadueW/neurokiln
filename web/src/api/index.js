@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { clearSession, getToken } from '@/utils/auth'
+import { translateError } from '@/utils/errors'
 
 const request = axios.create({ baseURL: '/api', timeout: 600000 })
 
@@ -26,11 +27,16 @@ request.interceptors.response.use(
   (response) => response.data,
   (error) => {
     const detail = error.response?.data?.detail
-    const message = typeof detail === 'string'
+    const raw = typeof detail === 'string'
       ? detail
       : Array.isArray(detail)
         ? detail.map((item) => item.msg).join('；')
-        : `请求失败：${error.message}`
+        : ''
+    const message = translateError(
+      error.response?.data?.code,
+      raw,
+      translateError('request.network', '', `请求失败：${error.message}`),
+    )
     const url = error.config?.url || ''
     const authAttempt = url.includes('/auth/login')
       || url.includes('/auth/bootstrap')
@@ -95,3 +101,8 @@ export const getExperimentStats = () => request.get('/experiments/stats')
 export const getHPOTemplates = () => request.get('/hpo/templates')
 export const submitHPOJob = (data) => request.post('/hpo/jobs', data)
 export const promoteHPOResult = (data) => request.post('/hpo/promote', data)
+export const submitExplanationJob = (data) => request.post('/explanations/jobs', data)
+export const getExplanations = (params = {}) => request.get('/explanations', { params })
+export const getExplanationAggregate = (params = {}) => request.get('/explanations/aggregate', { params })
+export const getExplanation = (id) => request.get(`/explanations/${id}`)
+export const deleteExplanation = (id) => request.delete(`/explanations/${id}`)

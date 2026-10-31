@@ -18,7 +18,7 @@ from typing import Any, Iterable, Iterator, Sequence
 from . import __version__ as engine_version
 from .stats import compare_pipelines
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS datasets (
 
 CREATE TABLE IF NOT EXISTS experiments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
     name TEXT NOT NULL,
     dataset_id TEXT NOT NULL,
     dataset_name TEXT NOT NULL,
@@ -95,10 +96,34 @@ CREATE TABLE IF NOT EXISTS custom_pipeline_spaces (
     FOREIGN KEY(custom_pipeline_id) REFERENCES custom_pipelines(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS explanations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment_id INTEGER REFERENCES experiments(id) ON DELETE CASCADE,
+    job_id TEXT,
+    dataset_id TEXT NOT NULL DEFAULT '',
+    pipeline TEXT NOT NULL,
+    pipeline_name TEXT NOT NULL,
+    fold INTEGER NOT NULL DEFAULT 0,
+    repeat INTEGER NOT NULL DEFAULT 0,
+    seed INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    directory TEXT NOT NULL DEFAULT '',
+    summary_json TEXT,
+    warnings_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    duration_ms REAL
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_experiment ON runs(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_experiments_created ON experiments(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_experiments_dataset ON experiments(dataset_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_job
+    ON experiments(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_custom_pipelines_updated ON custom_pipelines(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_explanations_experiment ON explanations(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_explanations_created ON explanations(created_at DESC);
 """
 
 
@@ -196,6 +221,16 @@ class ExperimentStore:
             for name in ("y_proba_json", "proba_classes_json", "calibration_json"):
                 if name not in columns:
                     conn.execute(f"ALTER TABLE runs ADD COLUMN {name} TEXT")
+            experiment_columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(experiments)").fetchall()
+            }
+            if "job_id" not in experiment_columns:
+                conn.execute("ALTER TABLE experiments ADD COLUMN job_id TEXT")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_job "
+                "ON experiments(job_id) WHERE job_id IS NOT NULL"
+            )
             conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -242,8 +277,14 @@ class ExperimentStore:
         duration_ms: float,
         notes: str = "",
         status: str = "completed",
+        job_id: str | None = None,
     ) -> int:
-        """Insert an experiment and all per-split runs in one transaction."""
+        """Insert an experiment and all per-split runs in one transaction.
+
+        ``job_id`` makes retries idempotent: a job that was interrupted after
+        the experiment was committed reuses the existing row instead of
+        creating a duplicate on recovery.
+        """
         pipeline_names = {
             str(item.get("id")): str(item.get("name") or item.get("id"))
             for item in pipelines
@@ -251,17 +292,24 @@ class ExperimentStore:
         summary, n_runs = _summarize_rows(arena_rows, pipeline_names)
         now = _now()
         with self._connect() as conn:
+            if job_id:
+                existing = conn.execute(
+                    "SELECT id FROM experiments WHERE job_id = ?", (str(job_id),)
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
             cursor = conn.execute(
                 """
                 INSERT INTO experiments(
-                    name, dataset_id, dataset_name, dataset_version,
+                    job_id, name, dataset_id, dataset_name, dataset_version,
                     dataset_signature, dataset_manifest_json, protocol,
                     protocol_params_json, pipelines_json, seeds_json,
                     engine_version, notes, status, created_at, completed_at,
                     duration_ms, summary_json, n_runs
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    job_id,
                     name,
                     dataset_id,
                     dataset_name,
@@ -422,6 +470,153 @@ class ExperimentStore:
             cursor = conn.execute("DELETE FROM experiments WHERE id = ?", (experiment_id,))
         return cursor.rowcount > 0
 
+    def create_explanation(
+        self,
+        *,
+        pipeline: str,
+        pipeline_name: str,
+        folder: str,
+        experiment_id: int | None = None,
+        dataset_id: str = "",
+        job_id: str | None = None,
+        fold: int = 0,
+        repeat: int = 0,
+        seed: int | None = None,
+    ) -> int:
+        """Register a pending explanation before the job starts computing."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO explanations(
+                    experiment_id, job_id, dataset_id, pipeline, pipeline_name,
+                    fold, repeat, seed, status, directory, created_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)
+                """,
+                (
+                    experiment_id, job_id, dataset_id, pipeline, pipeline_name,
+                    int(fold), int(repeat), seed, folder, _now(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_explanation_by_job_id(self, job_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM explanations WHERE job_id = ? ORDER BY id DESC LIMIT 1",
+                (str(job_id),),
+            ).fetchone()
+        return _explanation_item(row) if row is not None else None
+
+    def restart_explanation(self, explanation_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE explanations
+                SET status = 'running', error = NULL, completed_at = NULL,
+                    duration_ms = NULL, summary_json = NULL, warnings_json = NULL
+                WHERE id = ?
+                """,
+                (int(explanation_id),),
+            )
+
+    def fail_explanations_for_jobs(
+        self, job_ids: Sequence[str], message: str
+    ) -> int:
+        if not job_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in job_ids)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE explanations
+                SET status = 'failed', error = ?, completed_at = ?
+                WHERE status = 'running' AND job_id IN ({placeholders})
+                """,
+                (str(message)[:2000], _now(), *[str(item) for item in job_ids]),
+            )
+        return int(cursor.rowcount)
+
+    def finish_explanation(
+        self,
+        explanation_id: int,
+        *,
+        folder: str,
+        summary: dict[str, Any],
+        warnings: Sequence[str],
+        duration_ms: float,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE explanations
+                SET status = 'completed', directory = ?, summary_json = ?,
+                    warnings_json = ?, error = NULL, completed_at = ?, duration_ms = ?
+                WHERE id = ?
+                """,
+                (
+                    folder, _dumps(summary), _dumps(list(warnings)), _now(),
+                    float(duration_ms), int(explanation_id),
+                ),
+            )
+
+    def fail_explanation(self, explanation_id: int, message: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE explanations
+                SET status = 'failed', error = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (str(message)[:2000], _now(), int(explanation_id)),
+            )
+
+    def get_explanation(self, explanation_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM explanations WHERE id = ?", (int(explanation_id),)
+            ).fetchone()
+        return _explanation_item(row) if row is not None else None
+
+    def list_explanations(
+        self,
+        experiment_id: int | None = None,
+        pipeline: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        where, params = [], []
+        if experiment_id is not None:
+            where.append("experiment_id = ?")
+            params.append(int(experiment_id))
+        if pipeline:
+            where.append("pipeline = ?")
+            params.append(str(pipeline))
+        if status:
+            where.append("status = ?")
+            params.append(str(status))
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._connect() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM explanations {clause}", params
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"SELECT * FROM explanations {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+                [*params, int(limit), int(offset)],
+            ).fetchall()
+        return [_explanation_item(row) for row in rows], int(total)
+
+    def delete_explanation(self, explanation_id: int) -> dict[str, Any] | None:
+        """Remove the registry row and return it so the caller can drop files."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM explanations WHERE id = ?", (int(explanation_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute("DELETE FROM explanations WHERE id = ?", (int(explanation_id),))
+        return _explanation_item(row)
+
     def stats(self) -> dict[str, Any]:
         with self._connect() as conn:
             experiments = conn.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
@@ -435,14 +630,34 @@ class ExperimentStore:
             datasets = conn.execute(
                 "SELECT COUNT(DISTINCT dataset_id) FROM experiments"
             ).fetchone()[0]
-            best = conn.execute(
-                """
-                SELECT e.id, e.name, r.pipeline, r.pipeline_name, r.balanced_accuracy
-                FROM runs r JOIN experiments e ON e.id = r.experiment_id
-                WHERE e.status = 'completed'
-                ORDER BY r.balanced_accuracy DESC LIMIT 1
-                """
-            ).fetchone()
+            # 最佳结果按实验级折均值比较，和报告中心口径一致；
+            # 单折最高分会高估表现，不能当作平台能力展示。
+            best: dict[str, Any] | None = None
+            for row in conn.execute(
+                "SELECT id, name, summary_json FROM experiments "
+                "WHERE status = 'completed' AND summary_json IS NOT NULL"
+            ).fetchall():
+                summary = _loads(row["summary_json"], {})
+                score = summary.get("best_balanced_accuracy")
+                if score is None:
+                    continue
+                pipeline = summary.get("best_pipeline")
+                label = next(
+                    (
+                        item.get("pipeline_name")
+                        for item in summary.get("pipelines") or []
+                        if item.get("pipeline") == pipeline
+                    ),
+                    pipeline,
+                )
+                if best is None or float(score) > float(best["balanced_accuracy"]):
+                    best = {
+                        "id": row["id"],
+                        "name": row["name"],
+                        "pipeline": pipeline,
+                        "pipeline_name": label,
+                        "balanced_accuracy": float(score),
+                    }
             latest = conn.execute(
                 "SELECT id, name, dataset_name, status, created_at FROM experiments "
                 "ORDER BY id DESC LIMIT 1"
@@ -455,7 +670,7 @@ class ExperimentStore:
             "runs": int(runs),
             "datasets_used": int(datasets),
             "custom_pipelines": int(custom),
-            "best_run": _row_to_dict(best) if best else None,
+            "best_run": best,
             "latest_experiment": _row_to_dict(latest) if latest else None,
             "storage": str(self.path),
         }
@@ -589,6 +804,7 @@ def _list_item(row: sqlite3.Row) -> dict[str, Any]:
         }
     return {
         "id": row["id"],
+        "job_id": row["job_id"],
         "name": row["name"],
         "dataset": {
             "id": row["dataset_id"],
@@ -621,6 +837,28 @@ def _custom_item(row: sqlite3.Row) -> dict[str, Any]:
         "spec": _loads(row["spec_json"], {}),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def _explanation_item(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "experiment_id": row["experiment_id"],
+        "job_id": row["job_id"],
+        "dataset_id": row["dataset_id"],
+        "pipeline": row["pipeline"],
+        "pipeline_name": row["pipeline_name"],
+        "fold": row["fold"],
+        "repeat": row["repeat"],
+        "seed": row["seed"],
+        "status": row["status"],
+        "directory": row["directory"],
+        "summary": _loads(row["summary_json"], None),
+        "warnings": _loads(row["warnings_json"], []),
+        "error": row["error"],
+        "created_at": row["created_at"],
+        "completed_at": row["completed_at"],
+        "duration_ms": row["duration_ms"],
     }
 
 

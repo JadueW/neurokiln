@@ -34,6 +34,11 @@ cache/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -64,6 +64,7 @@ class XdawnLDA(Node):
         if self.classes_.size != 2:
             raise ValueError("XdawnLDA currently supports exactly two ERP classes")
         self._xdawn.fit(X, y, ctx)
+        self.xdawn_ = self._xdawn.xdawn_
         features = self.transform(X)
         shrinkage = self.shrinkage
         if isinstance(shrinkage, str) and shrinkage.strip().lower() != "auto":
