@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 
@@ -191,6 +192,54 @@ def test_store_schema_version_and_filters(tmp_path):
             "SELECT value FROM schema_meta WHERE key = 'schema_version'"
         ).fetchone()[0]
     assert int(version) == SCHEMA_VERSION
+
+
+def test_store_migrates_legacy_experiments_without_job_id(tmp_path):
+    db_path = tmp_path / "legacy.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                dataset_id TEXT NOT NULL,
+                dataset_name TEXT NOT NULL,
+                dataset_version TEXT NOT NULL DEFAULT '',
+                dataset_signature TEXT NOT NULL,
+                dataset_manifest_json TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                protocol_params_json TEXT NOT NULL,
+                pipelines_json TEXT NOT NULL,
+                seeds_json TEXT NOT NULL,
+                engine_version TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'running',
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                duration_ms REAL,
+                summary_json TEXT,
+                n_runs INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO schema_meta(key, value) VALUES('schema_version', '5');
+            """
+        )
+
+    store = ExperimentStore(db_path)
+    kwargs = _record_kwargs()
+    kwargs["job_id"] = "legacy-job"
+    store.record_experiment(**kwargs)
+
+    with store._connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(experiments)")}
+        indexes = {row["name"] for row in conn.execute("PRAGMA index_list(experiments)")}
+        version = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+    assert "job_id" in columns
+    assert "idx_experiments_job" in indexes
+    assert int(version) == SCHEMA_VERSION
+    assert store.list_experiments()[0][0]["job_id"] == "legacy-job"
 
 
 def test_store_experiment_is_idempotent_per_job(tmp_path):

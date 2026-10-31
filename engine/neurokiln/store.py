@@ -119,8 +119,6 @@ CREATE TABLE IF NOT EXISTS explanations (
 CREATE INDEX IF NOT EXISTS idx_runs_experiment ON runs(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_experiments_created ON experiments(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_experiments_dataset ON experiments(dataset_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_experiments_job
-    ON experiments(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_custom_pipelines_updated ON custom_pipelines(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_explanations_experiment ON explanations(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_explanations_created ON explanations(created_at DESC);

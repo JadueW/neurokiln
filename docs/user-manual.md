@@ -835,7 +835,7 @@ cd neurokiln\engine
 ..\.venv312\Scripts\python.exe -m pytest -q
 ```
 
-截至本文档：引擎测试 `140 passed, 3 skipped`，`server/tests` 为 `8 passed`，合计 `148 passed, 3 skipped`。跳过项包括需要真实数据开关的 MOABB 集成与 2a 金标准/解释回归。测试覆盖协议无重叠、训练折 fit 隔离、拆分安全缓存、概率校准、插件清单 v2/哈希/路径校验、多解码器融合、命名端口隔离、节点输入数据类型校验、自定义 HPO 模板搜索空间校验、SQLite 往返与 bundle 复现、任务恢复与幂等、结构化错误码、可解释性产物、跨折聚合与报告章节等。
+截至本文档：引擎测试 `141 passed, 3 skipped`，`server/tests` 为 `8 passed`，合计 `149 passed, 3 skipped`。跳过项包括需要真实数据开关的 MOABB 集成与 2a 金标准/解释回归。测试覆盖协议无重叠、训练折 fit 隔离、拆分安全缓存、概率校准、插件清单 v2/哈希/路径校验、多解码器融合、命名端口隔离、节点输入数据类型校验、自定义 HPO 模板搜索空间校验、SQLite 往返与 v5→v6 迁移、bundle 复现、任务恢复与幂等、结构化错误码、可解释性产物、跨折聚合与报告章节等。
 
 一键本地 CI：
 
